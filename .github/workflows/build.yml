@@ -3,15 +3,17 @@ name: Build Canvas Archive App
 on:
   push:
     tags:
-      - 'v*'           # triggers on v1.0, v1.0.1, etc.
-  workflow_dispatch:   # lets you trigger manually from GitHub Actions tab
+      - 'v*'
+  workflow_dispatch:
 
 jobs:
-  # ────────────────────────────────────────────────────────────────
+  # ──────────────────────────────────────────────────────────────
   #  Build Mac .dmg
-  # ────────────────────────────────────────────────────────────────
+  # ──────────────────────────────────────────────────────────────
   build-mac:
     runs-on: macos-latest
+    permissions:
+      contents: write    # ← fixes "Resource not accessible" error
 
     steps:
       - name: Checkout app repo
@@ -33,13 +35,13 @@ jobs:
       - name: Download scripts from canvas-archive
         run: |
           BASE="https://raw.githubusercontent.com/jampersandbox/canvas-archive/main"
-          curl -fsSL "$BASE/canvas_auth.py"           -o canvas_auth.py
-          curl -fsSL "$BASE/canvas_downloader.py"     -o canvas_downloader.py
-          curl -fsSL "$BASE/external_downloader.py"   -o external_downloader.py
-          curl -fsSL "$BASE/panopto_downloader.py"    -o panopto_downloader.py
-          curl -fsSL "$BASE/reserves_downloader.py"   -o reserves_downloader.py
-          curl -fsSL "$BASE/patch_scripts.py"         -o patch_scripts.py
-          echo "✓ Scripts downloaded:"
+          curl -fsSL "$BASE/canvas_auth.py"         -o canvas_auth.py
+          curl -fsSL "$BASE/canvas_downloader.py"   -o canvas_downloader.py
+          curl -fsSL "$BASE/external_downloader.py" -o external_downloader.py
+          curl -fsSL "$BASE/panopto_downloader.py"  -o panopto_downloader.py
+          curl -fsSL "$BASE/reserves_downloader.py" -o reserves_downloader.py
+          curl -fsSL "$BASE/patch_scripts.py"       -o patch_scripts.py
+          echo "Scripts downloaded:"
           ls -la *.py
 
       - name: Generate icons
@@ -51,11 +53,11 @@ jobs:
       - name: Verify build
         run: |
           if [ -d "dist/Canvas Archive.app" ]; then
-            echo "✓ App bundle created successfully"
+            echo "App bundle created successfully"
             du -sh "dist/Canvas Archive.app"
           else
-            echo "✗ App bundle not found!"
-            ls dist/
+            echo "App bundle not found!"
+            ls dist/ || echo "dist/ is empty"
             exit 1
           fi
 
@@ -64,6 +66,7 @@ jobs:
 
       - name: Create DMG
         run: |
+          # Try create-dmg first
           create-dmg \
             --volname "Canvas Archive" \
             --volicon "icon.icns" \
@@ -73,17 +76,20 @@ jobs:
             --icon "Canvas Archive.app" 180 200 \
             --hide-extension "Canvas Archive.app" \
             --app-drop-link 480 200 \
-            --background-color "#f0f0f0" \
             "Canvas-Archive-Mac.dmg" \
             "dist/Canvas Archive.app" \
           || true
-          # Fallback: plain zip if create-dmg fails
+
+          # Fallback to zip if DMG creation failed
           if [ ! -f "Canvas-Archive-Mac.dmg" ]; then
-            echo "create-dmg failed — falling back to zip"
+            echo "create-dmg failed — creating zip instead"
             cd dist
             zip -r "../Canvas-Archive-Mac.zip" "Canvas Archive.app"
             cd ..
           fi
+
+          # Show what we have
+          ls -lh Canvas-Archive-Mac.* || echo "No output files found"
 
       - name: Upload to Release
         uses: softprops/action-gh-release@v2
@@ -92,28 +98,30 @@ jobs:
           files: |
             Canvas-Archive-Mac.dmg
             Canvas-Archive-Mac.zip
-          draft: false
-          prerelease: false
-          generate_release_notes: true
+          fail_on_unmatched_files: false
+          generate_release_notes: false
           body: |
-            ## 🎓 Canvas Archive
+            ## Canvas Archive
 
             Save all your Canvas course materials before you lose access.
 
             ### Download
-            - **Mac:** Download `Canvas-Archive-Mac.dmg`, open it, drag the app to Applications
-            - **Windows:** Download `CanvasArchiveSetup.exe` and run it
+            - **Mac:** Download `Canvas-Archive-Mac.dmg`, open it,
+              drag the app to your Applications folder.
+              First time opening: right-click the app, click Open,
+              then click Open again.
+            - **Windows:** Download `CanvasArchiveSetup.exe` and run it.
+              If Windows shows a warning, click More info then Run anyway.
 
-            ### First time?
-            The app will download a small browser component (~150 MB) on first launch.
-            This only happens once.
-
-            ### Having trouble?
-            See the [full instructions](https://github.com/jampersandbox/canvas-archive#readme).
+            ### What it downloads
+            - All course files (PDFs, slides, videos, documents)
+            - External readings (JSTOR, Google Drive, linked articles)
+            - Panopto lecture recordings
+            - Library reserve readings
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Upload as artifact (non-tag builds)
+      - name: Upload as artifact (manual/test builds)
         uses: actions/upload-artifact@v4
         if: "!startsWith(github.ref, 'refs/tags/')"
         with:
@@ -122,11 +130,13 @@ jobs:
             Canvas-Archive-Mac.dmg
             Canvas-Archive-Mac.zip
 
-  # ────────────────────────────────────────────────────────────────
+  # ──────────────────────────────────────────────────────────────
   #  Build Windows .exe installer
-  # ────────────────────────────────────────────────────────────────
+  # ──────────────────────────────────────────────────────────────
   build-windows:
     runs-on: windows-latest
+    permissions:
+      contents: write    # ← fixes "Resource not accessible" error
 
     steps:
       - name: Checkout app repo
@@ -158,10 +168,14 @@ jobs:
           )
           foreach ($f in $files) {
             Invoke-WebRequest "$BASE/$f" -OutFile $f -UseBasicParsing
-            Write-Host "✓ $f"
+            Write-Host "Downloaded: $f"
           }
 
       - name: Generate icons
+        # Force UTF-8 output so checkmarks don't crash Windows
+        env:
+          PYTHONIOENCODING: utf-8
+          PYTHONUTF8: "1"
         run: python create_icon.py
 
       - name: Build app with PyInstaller
@@ -169,11 +183,13 @@ jobs:
 
       - name: Verify build
         run: |
-          if (Test-Path "dist\Canvas Archive\Canvas Archive.exe") {
-            Write-Host "✓ Executable created successfully"
+          $exe = "dist\Canvas Archive\Canvas Archive.exe"
+          if (Test-Path $exe) {
+            Write-Host "Executable created successfully"
+            (Get-Item $exe).Length / 1MB
           } else {
-            Write-Host "✗ Executable not found!"
-            Get-ChildItem dist\
+            Write-Host "Executable not found!"
+            if (Test-Path "dist") { Get-ChildItem dist\ }
             exit 1
           }
 
@@ -183,15 +199,15 @@ jobs:
       - name: Create Windows installer
         run: makensis installer.nsi
 
-      - name: Verify installer
+      - name: Check outputs
         run: |
           if (Test-Path "CanvasArchiveSetup.exe") {
-            Write-Host "✓ Installer created"
-            (Get-Item "CanvasArchiveSetup.exe").Length / 1MB
+            Write-Host "Installer created successfully"
           } else {
-            Write-Host "✗ Installer not found — uploading zip instead"
-            Compress-Archive -Path "dist\Canvas Archive" `
-                             -DestinationPath "Canvas-Archive-Windows.zip"
+            Write-Host "Installer not found - creating zip fallback"
+            Compress-Archive `
+              -Path "dist\Canvas Archive" `
+              -DestinationPath "Canvas-Archive-Windows.zip"
           }
 
       - name: Upload to Release
@@ -201,10 +217,12 @@ jobs:
           files: |
             CanvasArchiveSetup.exe
             Canvas-Archive-Windows.zip
+          fail_on_unmatched_files: false
+          generate_release_notes: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Upload as artifact (non-tag builds)
+      - name: Upload as artifact (manual/test builds)
         uses: actions/upload-artifact@v4
         if: "!startsWith(github.ref, 'refs/tags/')"
         with:
