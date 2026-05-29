@@ -1,0 +1,214 @@
+name: Build Canvas Archive App
+
+on:
+  push:
+    tags:
+      - 'v*'           # triggers on v1.0, v1.0.1, etc.
+  workflow_dispatch:   # lets you trigger manually from GitHub Actions tab
+
+jobs:
+  # ────────────────────────────────────────────────────────────────
+  #  Build Mac .dmg
+  # ────────────────────────────────────────────────────────────────
+  build-mac:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout app repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python dependencies
+        run: |
+          pip install --upgrade pip
+          pip install pyinstaller pillow requests tqdm playwright yt-dlp
+
+      - name: Install Playwright browser
+        run: playwright install chromium
+
+      - name: Download scripts from canvas-archive
+        run: |
+          BASE="https://raw.githubusercontent.com/jampersandbox/canvas-archive/main"
+          curl -fsSL "$BASE/canvas_auth.py"           -o canvas_auth.py
+          curl -fsSL "$BASE/canvas_downloader.py"     -o canvas_downloader.py
+          curl -fsSL "$BASE/external_downloader.py"   -o external_downloader.py
+          curl -fsSL "$BASE/panopto_downloader.py"    -o panopto_downloader.py
+          curl -fsSL "$BASE/reserves_downloader.py"   -o reserves_downloader.py
+          curl -fsSL "$BASE/patch_scripts.py"         -o patch_scripts.py
+          echo "✓ Scripts downloaded:"
+          ls -la *.py
+
+      - name: Generate icons
+        run: python create_icon.py
+
+      - name: Build app with PyInstaller
+        run: pyinstaller canvas_archive.spec --noconfirm --clean
+
+      - name: Verify build
+        run: |
+          if [ -d "dist/Canvas Archive.app" ]; then
+            echo "✓ App bundle created successfully"
+            du -sh "dist/Canvas Archive.app"
+          else
+            echo "✗ App bundle not found!"
+            ls dist/
+            exit 1
+          fi
+
+      - name: Install create-dmg
+        run: brew install create-dmg
+
+      - name: Create DMG
+        run: |
+          create-dmg \
+            --volname "Canvas Archive" \
+            --volicon "icon.icns" \
+            --window-pos 200 120 \
+            --window-size 660 420 \
+            --icon-size 128 \
+            --icon "Canvas Archive.app" 180 200 \
+            --hide-extension "Canvas Archive.app" \
+            --app-drop-link 480 200 \
+            --background-color "#f0f0f0" \
+            "Canvas-Archive-Mac.dmg" \
+            "dist/Canvas Archive.app" \
+          || true
+          # Fallback: plain zip if create-dmg fails
+          if [ ! -f "Canvas-Archive-Mac.dmg" ]; then
+            echo "create-dmg failed — falling back to zip"
+            cd dist
+            zip -r "../Canvas-Archive-Mac.zip" "Canvas Archive.app"
+            cd ..
+          fi
+
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: |
+            Canvas-Archive-Mac.dmg
+            Canvas-Archive-Mac.zip
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          body: |
+            ## 🎓 Canvas Archive
+
+            Save all your Canvas course materials before you lose access.
+
+            ### Download
+            - **Mac:** Download `Canvas-Archive-Mac.dmg`, open it, drag the app to Applications
+            - **Windows:** Download `CanvasArchiveSetup.exe` and run it
+
+            ### First time?
+            The app will download a small browser component (~150 MB) on first launch.
+            This only happens once.
+
+            ### Having trouble?
+            See the [full instructions](https://github.com/jampersandbox/canvas-archive#readme).
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload as artifact (non-tag builds)
+        uses: actions/upload-artifact@v4
+        if: "!startsWith(github.ref, 'refs/tags/')"
+        with:
+          name: Canvas-Archive-Mac
+          path: |
+            Canvas-Archive-Mac.dmg
+            Canvas-Archive-Mac.zip
+
+  # ────────────────────────────────────────────────────────────────
+  #  Build Windows .exe installer
+  # ────────────────────────────────────────────────────────────────
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout app repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python dependencies
+        run: |
+          pip install --upgrade pip
+          pip install pyinstaller pillow requests tqdm playwright yt-dlp
+
+      - name: Install Playwright browser
+        run: playwright install chromium
+
+      - name: Download scripts from canvas-archive
+        run: |
+          $BASE = "https://raw.githubusercontent.com/jampersandbox/canvas-archive/main"
+          $files = @(
+            "canvas_auth.py",
+            "canvas_downloader.py",
+            "external_downloader.py",
+            "panopto_downloader.py",
+            "reserves_downloader.py",
+            "patch_scripts.py"
+          )
+          foreach ($f in $files) {
+            Invoke-WebRequest "$BASE/$f" -OutFile $f -UseBasicParsing
+            Write-Host "✓ $f"
+          }
+
+      - name: Generate icons
+        run: python create_icon.py
+
+      - name: Build app with PyInstaller
+        run: pyinstaller canvas_archive.spec --noconfirm --clean
+
+      - name: Verify build
+        run: |
+          if (Test-Path "dist\Canvas Archive\Canvas Archive.exe") {
+            Write-Host "✓ Executable created successfully"
+          } else {
+            Write-Host "✗ Executable not found!"
+            Get-ChildItem dist\
+            exit 1
+          }
+
+      - name: Install NSIS
+        run: choco install nsis --yes --no-progress
+
+      - name: Create Windows installer
+        run: makensis installer.nsi
+
+      - name: Verify installer
+        run: |
+          if (Test-Path "CanvasArchiveSetup.exe") {
+            Write-Host "✓ Installer created"
+            (Get-Item "CanvasArchiveSetup.exe").Length / 1MB
+          } else {
+            Write-Host "✗ Installer not found — uploading zip instead"
+            Compress-Archive -Path "dist\Canvas Archive" `
+                             -DestinationPath "Canvas-Archive-Windows.zip"
+          }
+
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: |
+            CanvasArchiveSetup.exe
+            Canvas-Archive-Windows.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload as artifact (non-tag builds)
+        uses: actions/upload-artifact@v4
+        if: "!startsWith(github.ref, 'refs/tags/')"
+        with:
+          name: Canvas-Archive-Windows
+          path: |
+            CanvasArchiveSetup.exe
+            Canvas-Archive-Windows.zip
