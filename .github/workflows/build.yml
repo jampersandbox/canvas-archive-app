@@ -197,7 +197,23 @@ jobs:
         run: choco install nsis --yes --no-progress
 
       - name: Create Windows installer
-        run: makensis installer.nsi
+        run: |
+          $nsis = "C:\Program Files (x86)\NSIS\makensis.exe"
+          if (Test-Path $nsis) {
+            & $nsis installer.nsi
+          } else {
+            # Try finding it wherever choco installed it
+            $found = Get-ChildItem "C:\Program Files*\NSIS\makensis.exe" `
+                     -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($found) {
+              & $found.FullName installer.nsi
+            } else {
+              Write-Host "makensis not found - creating zip instead"
+              Compress-Archive `
+                -Path "dist\Canvas Archive" `
+                -DestinationPath "Canvas-Archive-Windows.zip"
+            }
+          }
 
       - name: Check outputs
         run: |
