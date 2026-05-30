@@ -223,7 +223,8 @@ jobs:
             Write-Host "Installer not found - creating zip fallback"
             Compress-Archive `
               -Path "dist\Canvas Archive" `
-              -DestinationPath "Canvas-Archive-Windows.zip"
+              -DestinationPath "Canvas-Archive-Windows.zip" `
+              -Force
           }
 
       - name: Upload to Release
