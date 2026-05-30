@@ -166,12 +166,7 @@ _LOGIN_PHRASES = [
 # ─────────────────────────────────────────────────────────────────────────────
 
 def load_config() -> dict:
-    if CONFIG_FILE.exists():
-        try:
-            return json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
-        except Exception:
-            pass
-    return {
+    defaults = {
         "canvas_url":   "https://canvas.harvard.edu",
         "panopto_url":  "https://harvard.hosted.panopto.com",
         "output_dir":   str(Path.home() / "Documents" / "canvas_downloads"),
@@ -182,6 +177,14 @@ def load_config() -> dict:
         "do_panopto":   True,
         "do_reserves":  True,
     }
+    if CONFIG_FILE.exists():
+        try:
+            saved = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+            if isinstance(saved, dict):
+                defaults.update(saved)
+        except Exception:
+            pass
+    return defaults
 
 
 def save_config(cfg: dict) -> None:
