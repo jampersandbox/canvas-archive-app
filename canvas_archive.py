@@ -8,6 +8,7 @@ Canvas Archive — Save your course materials before you lose access.
 # ── --run-script dispatch (must be first) ─────────────────────────────────────
 import sys
 import os
+import re
 
 if len(sys.argv) >= 3 and sys.argv[1] == "--run-script":
     script_name = sys.argv[2]
@@ -33,17 +34,13 @@ if len(sys.argv) >= 3 and sys.argv[1] == "--run-script":
                 "Canvas Archive",
             )
         else:
-            data_dir = os.path.join(
-                os.path.expanduser("~"), ".canvas-archive"
-            )
+            data_dir = os.path.join(os.path.expanduser("~"), ".canvas-archive")
     else:
         data_dir = script_dir
 
     os.makedirs(data_dir, exist_ok=True)
-
     if script_dir not in sys.path:
         sys.path.insert(0, script_dir)
-
     os.chdir(data_dir)
 
     script_path = os.path.join(script_dir, script_name)
@@ -52,9 +49,7 @@ if len(sys.argv) >= 3 and sys.argv[1] == "--run-script":
         sys.exit(1)
 
     import importlib.util
-    spec   = importlib.util.spec_from_file_location(
-        "_canvas_script", script_path
-    )
+    spec   = importlib.util.spec_from_file_location("_canvas_script", script_path)
     module = importlib.util.module_from_spec(spec)
     sys.argv = [script_path] + script_args
     try:
@@ -107,12 +102,10 @@ def _playwright_browsers_dir() -> Path:
         return Path.home() / "Library" / "Caches" / "ms-playwright"
     elif sys.platform.startswith("win"):
         return Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "ms-playwright"
-    else:
-        return Path.home() / ".cache" / "ms-playwright"
+    return Path.home() / ".cache" / "ms-playwright"
 
 
 def _abs(path: str) -> str:
-    """Expand ~ and resolve to absolute path."""
     return str(Path(path).expanduser().resolve())
 
 
@@ -121,6 +114,23 @@ DATA_DIR      = _get_data_dir()
 CONFIG_FILE   = DATA_DIR / "canvas_config.json"
 SENTINEL_FILE = DATA_DIR / "gui_login_ready.txt"
 LOCK_FILE     = DATA_DIR / ".canvas_archive.lock"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Design tokens  (matching archive-your-canvas.lovable.app)
+# ─────────────────────────────────────────────────────────────────────────────
+
+CREAM    = "#f5f0e8"   # warm notebook paper background
+NAVY     = "#1a1a2e"   # text and card borders
+PURPLE   = "#4a0e8f"   # header and accents
+GREEN    = "#2d8a3e"   # start button
+GREEN_D  = "#236b31"   # start button active
+RED      = "#c0392b"   # stop button when active
+CARD_BG  = "#faf8f3"   # card fill
+LOG_BG   = "#0d0d1a"   # progress log background
+LOG_FG   = "#4ade80"   # progress log text
+GREY_BTN = "#d4cfc4"   # disabled button background
+GREY_TXT = "#888888"   # disabled text
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -139,15 +149,17 @@ def _acquire_lock() -> bool:
     except (IOError, OSError):
         return False
     except ImportError:
-        # Windows — use a different approach
         try:
             if LOCK_FILE.exists():
-                pid = int(LOCK_FILE.read_text().strip())
-                import ctypes
-                handle = ctypes.windll.kernel32.OpenProcess(1, False, pid)
-                if handle:
-                    ctypes.windll.kernel32.CloseHandle(handle)
-                    return False
+                try:
+                    pid = int(LOCK_FILE.read_text().strip())
+                    import ctypes
+                    handle = ctypes.windll.kernel32.OpenProcess(1, False, pid)
+                    if handle:
+                        ctypes.windll.kernel32.CloseHandle(handle)
+                        return False
+                except Exception:
+                    pass
             LOCK_FILE.write_text(str(os.getpid()))
             return True
         except Exception:
@@ -207,17 +219,6 @@ _AUTH_OK_PHRASES = [
     "Using saved cookies",
 ]
 
-# Design tokens matching the website
-CREAM     = "#f5f0e8"
-NAVY      = "#1a1a2e"
-PURPLE    = "#4a0e8f"
-PURPLE_LT = "#6b21cc"
-GREEN     = "#2d8a3e"
-GREEN_HOV = "#236b31"
-DARK_LOG  = "#0d0d1a"
-GREEN_LOG = "#4ade80"
-CARD_BG   = "#faf8f3"
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  Config
@@ -251,25 +252,16 @@ def save_config(cfg: dict) -> None:
 
 def write_canvas_config(canvas_url: str, panopto_url: str,
                         output_dir: str = "") -> None:
-    """
-    Write canvas_config.py and canvas_config.json.
-    Both files are read by the downloader scripts.
-    output_dir is included so scripts know where to save files.
-    """
     (DATA_DIR / "canvas_config.py").write_text(
         f"CANVAS_BASE_URL  = {canvas_url!r}\n"
         f"PANOPTO_BASE_URL = {panopto_url!r}\n",
         encoding="utf-8",
     )
-    cfg = {
-        "canvas_url":  canvas_url,
-        "panopto_url": panopto_url,
-    }
+    cfg = {"canvas_url": canvas_url, "panopto_url": panopto_url}
     if output_dir:
         cfg["output_dir"] = _abs(output_dir)
     (DATA_DIR / "canvas_config.json").write_text(
-        json.dumps(cfg, indent=2),
-        encoding="utf-8",
+        json.dumps(cfg, indent=2), encoding="utf-8"
     )
 
 
@@ -281,15 +273,14 @@ def _chromium_exe() -> Path | None:
     base = _playwright_browsers_dir()
     if not base.exists():
         return None
-    patterns = [
+    for pat in [
         "chromium*/chrome-mac-arm64/Google Chrome for Testing.app"
         "/Contents/MacOS/Google Chrome for Testing",
         "chromium*/chrome-mac-x64/Google Chrome for Testing.app"
         "/Contents/MacOS/Google Chrome for Testing",
         "chromium*/chrome-win/chrome.exe",
         "chromium*/chrome-linux/chrome",
-    ]
-    for pat in patterns:
+    ]:
         matches = list(base.glob(pat))
         if matches:
             return matches[0]
@@ -309,39 +300,32 @@ def install_browser_dialog(parent) -> bool:
     win.attributes("-topmost", True)
     win.protocol("WM_DELETE_WINDOW", lambda: None)
 
-    pw, ph = 520, 260
+    pw, ph = 520, 270
     x = (win.winfo_screenwidth()  - pw) // 2
     y = (win.winfo_screenheight() - ph) // 2
     win.geometry(f"{pw}x{ph}+{x}+{y}")
 
-    tk.Label(
-        win, text="One-time setup",
-        font=("Georgia", 18, "bold"),
-        bg=CREAM, fg=NAVY,
-    ).pack(pady=(24, 4))
+    border = tk.Frame(win, bg=NAVY, padx=3, pady=3)
+    border.pack(fill="both", expand=True, padx=20, pady=20)
+    inner = tk.Frame(border, bg=CREAM, padx=24, pady=20)
+    inner.pack(fill="both", expand=True)
 
+    tk.Label(inner, text="One-time setup",
+             font=("Georgia", 16, "bold"), bg=CREAM, fg=NAVY).pack(pady=(0, 6))
     tk.Label(
-        win,
-        text=(
-            "Downloading a browser for Canvas Archive to use.\n"
-            "About 150 MB — only happens once.\n"
-            "Please leave this window open."
-        ),
-        font=("Helvetica", 11),
-        bg=CREAM, fg=NAVY,
-        justify="center",
+        inner,
+        text="Downloading a browser for Canvas Archive to use.\n"
+             "About 150 MB — only happens once.\nPlease leave this window open.",
+        font=("Helvetica", 11), bg=CREAM, fg=NAVY, justify="center",
     ).pack(pady=(0, 12))
 
-    bar = ttk.Progressbar(win, mode="indeterminate", length=440)
-    bar.pack(pady=(0, 8), padx=30)
+    bar = ttk.Progressbar(inner, mode="indeterminate", length=420)
+    bar.pack(pady=(0, 8))
     bar.start(10)
 
     sv = tk.StringVar(value="Starting download…")
-    tk.Label(
-        win, textvariable=sv,
-        font=("Helvetica", 10),
-        fg=PURPLE, bg=CREAM,
-    ).pack()
+    tk.Label(inner, textvariable=sv,
+             font=("Helvetica", 10), fg=PURPLE, bg=CREAM).pack()
 
     result = {"ok": False}
 
@@ -351,15 +335,13 @@ def install_browser_dialog(parent) -> bool:
             env["PLAYWRIGHT_BROWSERS_PATH"] = str(_playwright_browsers_dir())
             proc = subprocess.Popen(
                 [sys.executable, "-m", "playwright", "install", "chromium"],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                universal_newlines=True,
-                env=env,
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                universal_newlines=True, env=env,
             )
             for line in proc.stdout:
                 line = line.strip()
                 if line:
-                    sv.set(line[:70])
+                    sv.set(line[:65])
             proc.wait()
             if proc.returncode == 0 and _browser_installed():
                 result["ok"] = True
@@ -378,6 +360,54 @@ def install_browser_dialog(parent) -> bool:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+#  TTK Style — force consistent light appearance
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _configure_style(root: tk.Tk) -> None:
+    style = ttk.Style(root)
+    try:
+        available = style.theme_names()
+        if "clam" in available:
+            style.theme_use("clam")
+        elif "alt" in available:
+            style.theme_use("alt")
+    except Exception:
+        pass
+
+    style.configure(".",
+                    background=CREAM, foreground=NAVY,
+                    font=("Helvetica", 11))
+    style.configure("TFrame",       background=CREAM)
+    style.configure("TLabel",       background=CREAM, foreground=NAVY)
+    style.configure("TLabelframe",  background=CREAM, foreground=PURPLE,
+                    relief="flat", borderwidth=0)
+    style.configure("TLabelframe.Label",
+                    background=CREAM, foreground=PURPLE,
+                    font=("Georgia", 11, "italic"))
+    style.configure("TCheckbutton", background=CREAM, foreground=NAVY)
+    style.map("TCheckbutton",
+              background=[("active", CREAM)],
+              foreground=[("disabled", GREY_TXT)])
+    style.configure("TScrollbar",
+                    background=CREAM, troughcolor="#e0d8cc",
+                    arrowcolor=NAVY, borderwidth=0)
+    style.configure("Vertical.TScrollbar",
+                    background=CREAM, troughcolor="#e0d8cc", arrowcolor=NAVY)
+    style.configure("TCombobox",
+                    fieldbackground="white", foreground=NAVY,
+                    selectbackground=PURPLE, selectforeground="white",
+                    bordercolor=NAVY)
+    style.map("TCombobox",
+              fieldbackground=[("readonly", "white")])
+    style.configure("TEntry",
+                    fieldbackground="white", foreground=NAVY,
+                    selectbackground=PURPLE, selectforeground="white",
+                    bordercolor=NAVY)
+    style.configure("TProgressbar",
+                    troughcolor="#e0d8cc", background=PURPLE)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 #  App
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -389,16 +419,7 @@ class CanvasArchiveApp:
         self.root.resizable(True, True)
         self.root.configure(bg=CREAM)
 
-        # Force light mode — prevent macOS dark mode from overriding colours
-        try:
-            self.root.tk.call("tk", "scaling", 1.0)
-            if sys.platform == "darwin":
-                self.root.tk.call(
-                    "::tk::unsupported::MacWindowStyle",
-                    "appearance", self.root._w, "aqua"
-                )
-        except Exception:
-            pass
+        _configure_style(root)
 
         sw = root.winfo_screenwidth()
         sh = root.winfo_screenheight()
@@ -412,8 +433,7 @@ class CanvasArchiveApp:
 
         self.canvas_url   = tk.StringVar(value=self._cfg["canvas_url"])
         self.panopto_url  = tk.StringVar(
-            value=self._cfg.get("panopto_url",
-                                "https://harvard.hosted.panopto.com"))
+            value=self._cfg.get("panopto_url", "https://harvard.hosted.panopto.com"))
         self.output_dir   = tk.StringVar(value=self._cfg["output_dir"])
         self.skip_ongoing = tk.BooleanVar(value=self._cfg["skip_ongoing"])
         self.skip_videos  = tk.BooleanVar(value=self._cfg["skip_videos"])
@@ -422,12 +442,14 @@ class CanvasArchiveApp:
         self.do_panopto   = tk.BooleanVar(value=self._cfg["do_panopto"])
         self.do_reserves  = tk.BooleanVar(value=self._cfg["do_reserves"])
 
-        self.running       = False
-        self.process:      subprocess.Popen | None = None
-        self.log_queue:    queue.Queue = queue.Queue()
-        self.script_queue: list[tuple[str, list[str]]] = []
-        self._login_popup: tk.Toplevel | None = None
-        self._dot_job:     str | None = None
+        self.running             = False
+        self.process:            subprocess.Popen | None = None
+        self.log_queue:          queue.Queue = queue.Queue()
+        self.script_queue:       list[tuple[str, list[str]]] = []
+        self._login_popup:       tk.Toplevel | None = None
+        self._dot_job:           str | None = None
+        # Progress bar collapsing state
+        self._last_was_progress: bool = False
 
         if SENTINEL_FILE.exists():
             try:
@@ -447,9 +469,8 @@ class CanvasArchiveApp:
             if not ok:
                 messagebox.showwarning(
                     "Browser not installed",
-                    "The browser download did not complete.\n\n"
                     "Canvas Archive needs a browser to log in to Canvas.\n"
-                    "Please try starting the app again.",
+                    "Please restart the app to try again.",
                     parent=self.root,
                 )
 
@@ -464,51 +485,54 @@ class CanvasArchiveApp:
         h_inner.pack(fill="x", padx=24)
 
         tk.Label(
-            h_inner,
-            text="Canvas Archive",
+            h_inner, text="Canvas Archive",
             font=("Georgia", 22, "bold"),
             fg="white", bg=PURPLE,
         ).pack(side="left")
 
         tk.Label(
-            h_inner,
-            text="★ free for graduating students ★",
+            h_inner, text="★ free for graduating students ★",
             font=("Helvetica", 10),
             fg="#c4a8ff", bg=PURPLE,
-        ).pack(side="right", pady=(4, 0))
+        ).pack(side="right", pady=(6, 0))
 
-        # ── Fixed bottom ──────────────────────────────────────────────────────
+        # ── Fixed bottom controls ─────────────────────────────────────────────
         bottom = tk.Frame(self.root, bg=CREAM, pady=14, padx=24)
         bottom.pack(fill="x", side="bottom")
 
+        # Start button — big, bold green
+        # NOTE: no cursor="hand2" — keeps normal arrow cursor
         self.start_btn = tk.Button(
             bottom,
-            text="Start Download  ▶",
+            text="▶   Start Download",
             font=("Helvetica", 14, "bold"),
             bg=GREEN, fg="white",
-            activebackground=GREEN_HOV,
+            activebackground=GREEN_D,
             activeforeground="white",
-            relief="flat",
-            cursor="hand2",
-            pady=10,
+            disabledforeground="#cccccc",
+            relief="flat", bd=0,
+            padx=20, pady=10,
             command=self._start,
         )
-        self.start_btn.pack(fill="x", pady=(0, 6))
+        self.start_btn.pack(fill="x", pady=(0, 8))
 
+        # Stop button — clearly styled; prominent red when active,
+        # invisible/flat when disabled
         self.stop_btn = tk.Button(
             bottom,
-            text="Stop",
+            text="⏹  Stop",
             font=("Helvetica", 11),
-            bg="#e0d8cc", fg=NAVY,
-            activebackground="#ccc4b8",
-            relief="flat",
-            cursor="hand2",
-            pady=6,
+            bg=GREY_BTN, fg=GREY_TXT,
+            activebackground=RED,
+            activeforeground="white",
+            relief="flat", bd=0,
+            padx=12, pady=6,
             state="disabled",
             command=self._stop,
         )
         self.stop_btn.pack(fill="x")
 
+        # Status label
         self.status_var = tk.StringVar(
             value="Ready — click Start Download to begin."
         )
@@ -531,32 +555,28 @@ class CanvasArchiveApp:
         sb.pack(side="right", fill="y")
         self._cv.pack(side="left", fill="both", expand=True)
 
-        self.main = tk.Frame(self._cv, bg=CREAM, padx=24, pady=16)
-        self._cw = self._cv.create_window(
-            (0, 0), window=self.main, anchor="nw"
-        )
+        self.main = tk.Frame(self._cv, bg=CREAM, padx=20, pady=16)
+        self._cw  = self._cv.create_window((0, 0), window=self.main, anchor="nw")
         self._cv.bind("<Configure>", self._on_canvas_resize)
         self.main.bind("<Configure>", lambda e:
-            self._cv.configure(scrollregion=self._cv.bbox("all"))
-        )
+            self._cv.configure(scrollregion=self._cv.bbox("all")))
         self._cv.bind_all("<MouseWheel>", self._on_scroll)
         self._cv.bind_all("<Button-4>",   self._on_scroll)
         self._cv.bind_all("<Button-5>",   self._on_scroll)
 
-        self._build_settings_card()
-        self._build_what_card()
-        self._build_options_card()
-        self._build_log_card()
+        self._build_settings()
+        self._build_what()
+        self._build_options()
+        self._build_log()
 
     def _on_canvas_resize(self, e):
         self._cv.itemconfig(self._cw, width=e.width)
-        # Draw notebook lines
+        # Notebook lines behind content
         self._cv.delete("nblines")
         for y in range(0, e.height, 28):
-            self._cv.create_line(
-                0, y, e.width, y,
-                fill="#d4cfc4", width=1, tags="nblines",
-            )
+            self._cv.create_line(0, y, e.width, y,
+                                  fill="#d4cfc4", width=1, tags="nblines")
+        self._cv.tag_lower("nblines")
 
     def _on_scroll(self, e):
         if e.num == 4:
@@ -564,9 +584,10 @@ class CanvasArchiveApp:
         elif e.num == 5:
             self._cv.yview_scroll(1, "units")
         else:
-            self._cv.yview_scroll(int(-1*(e.delta/120)), "units")
+            self._cv.yview_scroll(int(-1 * (e.delta / 120)), "units")
 
-    def _card(self, parent, title=None):
+    def _card(self, parent, title: str | None = None) -> tk.Frame:
+        """Card with thick navy border, matching the Lovable site."""
         outer = tk.Frame(parent, bg=NAVY, padx=2, pady=2)
         outer.pack(fill="x", pady=(0, 14))
         inner = tk.Frame(outer, bg=CARD_BG, padx=18, pady=14)
@@ -574,46 +595,38 @@ class CanvasArchiveApp:
         if title:
             tk.Label(
                 inner, text=title,
-                font=("Georgia", 12, "italic"),
+                font=("Georgia", 11, "italic"),
                 fg=PURPLE, bg=CARD_BG,
             ).pack(anchor="w", pady=(0, 10))
         return inner
 
-    def _build_settings_card(self):
+    def _build_settings(self):
         card = self._card(self.main, "Settings")
 
         r1 = tk.Frame(card, bg=CARD_BG)
         r1.pack(fill="x", pady=4)
-        tk.Label(
-            r1, text="Canvas URL", width=12,
-            font=("Helvetica", 11, "bold"),
-            fg=NAVY, bg=CARD_BG, anchor="w",
-        ).pack(side="left")
-        ttk.Combobox(
-            r1, textvariable=self.canvas_url,
-            values=COMMON_CANVAS_URLS,
-            width=44, font=("Helvetica", 11),
-        ).pack(side="left", padx=(8, 0))
+        tk.Label(r1, text="Canvas URL", width=12,
+                 font=("Helvetica", 11, "bold"),
+                 fg=NAVY, bg=CARD_BG, anchor="w").pack(side="left")
+        ttk.Combobox(r1, textvariable=self.canvas_url,
+                     values=COMMON_CANVAS_URLS,
+                     width=44, font=("Helvetica", 11)).pack(side="left", padx=(8, 0))
 
         r2 = tk.Frame(card, bg=CARD_BG)
         r2.pack(fill="x", pady=4)
-        tk.Label(
-            r2, text="Save to", width=12,
-            font=("Helvetica", 11, "bold"),
-            fg=NAVY, bg=CARD_BG, anchor="w",
-        ).pack(side="left")
-        ttk.Entry(
-            r2, textvariable=self.output_dir,
-            width=38, font=("Helvetica", 11),
-        ).pack(side="left", padx=(8, 6))
-        tk.Button(
-            r2, text="Browse…",
-            font=("Helvetica", 10),
-            bg=CREAM, fg=NAVY, relief="flat", cursor="hand2",
-            command=self._browse,
-        ).pack(side="left")
+        tk.Label(r2, text="Save to", width=12,
+                 font=("Helvetica", 11, "bold"),
+                 fg=NAVY, bg=CARD_BG, anchor="w").pack(side="left")
+        ttk.Entry(r2, textvariable=self.output_dir,
+                  width=38, font=("Helvetica", 11)).pack(side="left", padx=(8, 6))
+        # Browse button — no cursor="hand2"
+        tk.Button(r2, text="Browse…",
+                  font=("Helvetica", 10),
+                  bg=CREAM, fg=NAVY,
+                  relief="flat", bd=0,
+                  command=self._browse).pack(side="left")
 
-    def _build_what_card(self):
+    def _build_what(self):
         card = self._card(self.main, "What would you like to download?")
 
         grid = tk.Frame(card, bg=CARD_BG)
@@ -622,31 +635,34 @@ class CanvasArchiveApp:
         grid.columnconfigure(1, weight=1)
 
         for i, (var, label, desc) in enumerate([
-            (self.do_canvas,   "Course files",
+            (self.do_canvas,   "📄  Course files",
              "PDFs, slides, videos, documents"),
-            (self.do_external, "External readings",
+            (self.do_external, "🔗  External readings",
              "JSTOR, Google Drive, linked content"),
-            (self.do_panopto,  "Lecture recordings",
+            (self.do_panopto,  "🎬  Lecture recordings",
              "Panopto videos, sorted by course"),
-            (self.do_reserves, "Library reserves",
+            (self.do_reserves, "📚  Library reserves",
              "Articles & book chapters on reserve"),
         ]):
             row, col = divmod(i, 2)
-            self._pill_checkbox(grid, var, label, desc, row, col)
+            self._checkbox_card(grid, var, label, desc, row, col)
 
-    def _pill_checkbox(self, parent, var, label, desc, row, col):
+    def _checkbox_card(self, parent, var, label, desc, row, col):
+        """
+        Card-style toggle. Clearly shows ON/OFF:
+          ON  — light purple background, ☑ in purple
+          OFF — white background, ☐ in grey
+
+        Click anywhere on the card to toggle.
+        No cursor change (keeps standard arrow).
+        """
+        bg_on  = "#ede8ff"
+        bg_off = "white"
+
         outer = tk.Frame(parent, bg=NAVY, padx=2, pady=2)
         outer.grid(row=row, column=col, padx=5, pady=5, sticky="nsew")
 
-        bg_on  = "#ede8ff"
-        bg_off = CREAM
-
-        inner = tk.Frame(
-            outer,
-            bg=bg_on if var.get() else bg_off,
-            padx=12, pady=10,
-            cursor="hand2",
-        )
+        inner = tk.Frame(outer, bg=bg_off, padx=12, pady=10)
         inner.pack(fill="both", expand=True)
 
         def toggle(*_):
@@ -655,80 +671,84 @@ class CanvasArchiveApp:
         def refresh(*_):
             bg = bg_on if var.get() else bg_off
             inner.configure(bg=bg)
-            check_lbl.configure(
+            row_f.configure(bg=bg)
+            chk_lbl.configure(
                 bg=bg,
-                text="✓" if var.get() else "○",
-                fg=PURPLE if var.get() else "#aaa",
+                text="☑" if var.get() else "☐",
+                fg=PURPLE if var.get() else "#bbbbbb",
             )
             title_lbl.configure(bg=bg)
             desc_lbl.configure(bg=bg)
-            row_f.configure(bg=bg)
 
-        row_f = tk.Frame(inner, bg=inner["bg"])
+        row_f = tk.Frame(inner, bg=bg_off)
         row_f.pack(fill="x")
 
-        check_lbl = tk.Label(
+        chk_lbl = tk.Label(
             row_f,
-            text="✓" if var.get() else "○",
-            font=("Helvetica", 16, "bold"),
-            fg=PURPLE if var.get() else "#aaa",
-            bg=inner["bg"], width=2,
+            text="☑" if var.get() else "☐",
+            font=("Helvetica", 16),
+            fg=PURPLE if var.get() else "#bbbbbb",
+            bg=bg_off, width=2,
         )
-        check_lbl.pack(side="left")
+        chk_lbl.pack(side="left")
 
         title_lbl = tk.Label(
             row_f, text=label,
             font=("Helvetica", 11, "bold"),
-            fg=NAVY, bg=inner["bg"], anchor="w",
+            fg=NAVY, bg=bg_off, anchor="w",
         )
         title_lbl.pack(side="left", padx=(4, 0))
 
         desc_lbl = tk.Label(
             inner, text=desc,
             font=("Helvetica", 9),
-            fg="#666", bg=inner["bg"], anchor="w",
+            fg="#777777", bg=bg_off, anchor="w",
         )
-        desc_lbl.pack(fill="x", pady=(2, 0))
+        desc_lbl.pack(fill="x", pady=(3, 0))
 
-        for w in [inner, row_f, check_lbl, title_lbl, desc_lbl]:
+        # Bind click to every widget in the card
+        for w in [inner, row_f, chk_lbl, title_lbl, desc_lbl]:
             w.bind("<Button-1>", lambda e: toggle())
 
         var.trace_add("write", refresh)
         refresh()
 
-    def _build_options_card(self):
+    def _build_options(self):
         card = self._card(self.main)
+        opts = tk.Frame(card, bg=CARD_BG)
+        opts.pack(fill="x")
         for var, label in [
-            (self.skip_ongoing,
-             "Skip administrative / ongoing courses"),
-            (self.skip_videos,
-             "Skip video files  (saves disk space)"),
+            (self.skip_ongoing, "Skip administrative / ongoing courses"),
+            (self.skip_videos,  "Skip video files  (saves disk space)"),
         ]:
-            row = tk.Frame(card, bg=CARD_BG)
+            row = tk.Frame(opts, bg=CARD_BG)
             row.pack(fill="x", pady=3)
             ttk.Checkbutton(row, text=label, variable=var).pack(side="left")
 
-    def _build_log_card(self):
+    def _build_log(self):
         outer = tk.Frame(self.main, bg=NAVY, padx=2, pady=2)
         outer.pack(fill="both", expand=True, pady=(0, 6))
         self.log_text = scrolledtext.ScrolledText(
             outer,
-            height=12,
+            height=13,
             font=("Courier", 10),
-            bg=DARK_LOG, fg=GREEN_LOG,
-            insertbackground=GREEN_LOG,
-            state="disabled", relief="flat",
+            bg=LOG_BG, fg=LOG_FG,
+            insertbackground=LOG_FG,
+            state="disabled",
+            relief="flat",
             padx=12, pady=10,
         )
         self.log_text.pack(fill="both", expand=True)
+
         for tag, colour in [
-            ("success", GREEN_LOG),
-            ("error",   "#ff6b6b"),
-            ("warn",    "#ffd93d"),
-            ("info",    "#74b9ff"),
-            ("header",  "#c4a8ff"),
-            ("dim",     "#555577"),
-            ("login",   "#ffd93d"),
+            ("success",  "#4ade80"),
+            ("error",    "#ff6b6b"),
+            ("warn",     "#ffd93d"),
+            ("info",     "#74b9ff"),
+            ("header",   "#c4a8ff"),
+            ("dim",      "#444466"),
+            ("login",    "#ffd93d"),
+            ("progress", "#74b9ff"),   # in-progress download line
         ]:
             self.log_text.tag_config(tag, foreground=colour)
 
@@ -761,12 +781,9 @@ class CanvasArchiveApp:
         inner = tk.Frame(border, bg=CREAM, padx=24, pady=20)
         inner.pack(fill="both", expand=True)
 
-        tk.Label(
-            inner, text="Log in to Canvas",
-            font=("Georgia", 16, "bold"),
-            bg=CREAM, fg=NAVY,
-        ).pack(pady=(0, 8))
-
+        tk.Label(inner, text="Log in to Canvas",
+                 font=("Georgia", 16, "bold"),
+                 bg=CREAM, fg=NAVY).pack(pady=(0, 8))
         tk.Label(
             inner,
             text=(
@@ -776,27 +793,23 @@ class CanvasArchiveApp:
                 "click the button below."
             ),
             font=("Helvetica", 11),
-            bg=CREAM, fg=NAVY,
-            justify="center",
+            bg=CREAM, fg=NAVY, justify="center",
         ).pack(pady=(0, 16))
 
+        # Login confirm button — no cursor="hand2"
         tk.Button(
             inner,
-            text="I'm logged in  ✓",
+            text="  I'm logged in — continue  ",
             font=("Helvetica", 13, "bold"),
             bg=GREEN, fg="white",
-            activebackground=GREEN_HOV,
-            activeforeground="white",
-            relief="flat", cursor="hand2",
-            padx=24, pady=10,
+            activebackground=GREEN_D, activeforeground="white",
+            relief="flat", bd=0,
+            padx=20, pady=10,
             command=self._confirm_login,
         ).pack()
 
         popup.focus_force()
-        self.status_var.set(
-            "Waiting for login — click the button above"
-        )
-        self.status_lbl.config(fg="#856404")
+        self._set_status("Waiting for login — click the button above")
 
     def _close_login_popup(self):
         if self._login_popup is not None:
@@ -813,12 +826,15 @@ class CanvasArchiveApp:
             self._log(f"  Could not write sentinel: {exc}\n", "warn")
         self._close_login_popup()
         self._log("  Logged in — continuing…\n\n", "success")
-        self.status_var.set("Continuing download…")
-        self.status_lbl.config(fg=PURPLE)
+        self._set_status("Continuing download…")
 
     # ── Status / dots ─────────────────────────────────────────────────────────
 
-    def _start_dots(self, base):
+    def _set_status(self, text: str, fg: str = PURPLE):
+        self.status_var.set(text)
+        self.status_lbl.configure(fg=fg)
+
+    def _start_dots(self, base: str):
         self._dot_base  = base
         self._dot_count = 0
         self._animate_dots()
@@ -827,9 +843,7 @@ class CanvasArchiveApp:
         if not self.running or self._login_popup is not None:
             return
         self._dot_count = (self._dot_count + 1) % 4
-        self.status_var.set(
-            f"{self._dot_base}{'.' * self._dot_count}"
-        )
+        self._set_status(f"{self._dot_base}{'.' * self._dot_count}")
         self._dot_job = self.root.after(600, self._animate_dots)
 
     def _stop_dots(self):
@@ -856,8 +870,7 @@ class CanvasArchiveApp:
             if not ok:
                 messagebox.showerror(
                     "Browser required",
-                    "Canvas Archive needs a browser to work.\n"
-                    "Please try again.",
+                    "Canvas Archive needs a browser to work.\nPlease try again.",
                     parent=self.root,
                 )
                 return
@@ -870,7 +883,6 @@ class CanvasArchiveApp:
             )
             return
 
-        # ── KEY FIX: always resolve to absolute path ──────────────────────────
         out = _abs(self.output_dir.get().strip())
 
         cfg = {
@@ -892,31 +904,21 @@ class CanvasArchiveApp:
 
         self.script_queue = []
         if cfg["do_canvas"]:
-            self.script_queue.append((
-                "canvas_downloader.py",
-                ["--dir", out] + ongoing + novid,
-            ))
+            self.script_queue.append(("canvas_downloader.py",
+                                       ["--dir", out] + ongoing + novid))
         if cfg["do_external"]:
-            self.script_queue.append((
-                "external_downloader.py",
-                ["--dir", out],
-            ))
+            self.script_queue.append(("external_downloader.py",
+                                       ["--dir", out]))
         if cfg["do_panopto"]:
-            self.script_queue.append((
-                "panopto_downloader.py",
-                ["--dir", out] + ongoing,
-            ))
+            self.script_queue.append(("panopto_downloader.py",
+                                       ["--dir", out] + ongoing))
         if cfg["do_reserves"]:
-            self.script_queue.append((
-                "reserves_downloader.py",
-                ["--dir", out] + ongoing,
-            ))
+            self.script_queue.append(("reserves_downloader.py",
+                                       ["--dir", out] + ongoing))
 
         if not self.script_queue:
-            messagebox.showwarning(
-                "Nothing selected",
-                "Please select at least one type to download.",
-            )
+            messagebox.showwarning("Nothing selected",
+                                   "Please select at least one type to download.")
             return
 
         Path(out).mkdir(parents=True, exist_ok=True)
@@ -927,11 +929,14 @@ class CanvasArchiveApp:
             except Exception:
                 pass
 
-        self.running = True
+        self.running            = True
+        self._last_was_progress = False
         self._close_login_popup()
         self._clear_log()
-        self.start_btn.config(state="disabled", bg="#888888")
-        self.stop_btn.config(state="normal", bg="#c0392b", fg="white")
+
+        # Button states
+        self.start_btn.configure(state="disabled", bg="#aaaaaa")
+        self.stop_btn.configure(state="normal", bg=RED, fg="white")
 
         self._log("━" * 52 + "\n", "header")
         self._log("  Canvas Archive — Starting\n", "header")
@@ -955,17 +960,10 @@ class CanvasArchiveApp:
                 SENTINEL_FILE.unlink()
             except Exception:
                 pass
-        self.start_btn.config(
-            state="normal", bg=GREEN, fg="white",
-            text="Start Download  ▶",
-        )
-        self.stop_btn.config(
-            state="disabled", bg="#e0d8cc", fg=NAVY,
-        )
-        self.status_var.set(
-            "Stopped — click Start Download to begin again."
-        )
-        self.status_lbl.config(fg="#c0392b")
+        self.start_btn.configure(state="normal", bg=GREEN, fg="white",
+                                  text="▶   Start Download")
+        self.stop_btn.configure(state="disabled", bg=GREY_BTN, fg=GREY_TXT)
+        self._set_status("Stopped — click Start Download to begin again.", RED)
         self._log("\n  Stopped.\n", "warn")
 
     def _run_next_script(self):
@@ -978,9 +976,7 @@ class CanvasArchiveApp:
         script_name, args = self.script_queue.pop(0)
 
         if not (SCRIPT_DIR / script_name).exists():
-            self._log(
-                f"  {script_name} not found — skipping.\n", "warn"
-            )
+            self._log(f"  {script_name} not found — skipping.\n", "warn")
             self.root.after(200, self._run_next_script)
             return
 
@@ -993,6 +989,8 @@ class CanvasArchiveApp:
 
         self._stop_dots()
         self._start_dots(friendly)
+        self._last_was_progress = False
+
         self._log(f"\n  {friendly}…\n", "header")
 
         env = os.environ.copy()
@@ -1016,9 +1014,7 @@ class CanvasArchiveApp:
                 env=env,
             )
         except Exception as exc:
-            self._log(
-                f"  Could not start {script_name}: {exc}\n", "error"
-            )
+            self._log(f"  Could not start {script_name}: {exc}\n", "error")
             self.root.after(500, self._run_next_script)
             return
 
@@ -1045,16 +1041,13 @@ class CanvasArchiveApp:
                 SENTINEL_FILE.unlink()
             except Exception:
                 pass
-        self.start_btn.config(
-            state="normal", bg=GREEN, fg="white",
-            text="Start Download  ▶",
-        )
-        self.stop_btn.config(
-            state="disabled", bg="#e0d8cc", fg=NAVY,
-        )
+        self.start_btn.configure(state="normal", bg=GREEN, fg="white",
+                                  text="▶   Start Download")
+        self.stop_btn.configure(state="disabled", bg=GREY_BTN, fg=GREY_TXT)
+
         out = self.output_dir.get()
-        self.status_var.set("All done! Click Start to run again.")
-        self.status_lbl.config(fg=GREEN)
+        self._set_status("All done!  Click Start to run again.", GREEN)
+
         self._log("\n" + "━" * 52 + "\n", "success")
         self._log("  All downloads complete!\n", "success")
         self._log(f"  Files saved to:\n  {out}\n", "success")
@@ -1068,22 +1061,79 @@ class CanvasArchiveApp:
     # ── Log ───────────────────────────────────────────────────────────────────
 
     def _clear_log(self):
-        self.log_text.config(state="normal")
+        self.log_text.configure(state="normal")
         self.log_text.delete("1.0", "end")
-        self.log_text.config(state="disabled")
+        self.log_text.configure(state="disabled")
+        self._last_was_progress = False
 
-    def _log(self, text, tag=None):
-        self.log_text.config(state="normal")
+    def _log(self, text: str, tag: str | None = None):
+        """Append a line to the log. Resets progress-tracking state."""
+        self.log_text.configure(state="normal")
         self.log_text.insert("end", text, (tag,) if tag else ())
         self.log_text.see("end")
-        self.log_text.config(state="disabled")
+        self.log_text.configure(state="disabled")
+        self._last_was_progress = False
+
+    def _log_progress(self, fname: str, pct: str):
+        """
+        KEY FIX: show/update a single progress line instead of
+        appending a new line for every tqdm update.
+
+        Uses the '_progress' tag to track the region and replace
+        it in-place on subsequent calls for the same file.
+        """
+        progress_text = f"  ↓ {fname[:56]}… {pct}%\n"
+        self.log_text.configure(state="normal")
+
+        if self._last_was_progress:
+            # Replace the existing progress line
+            ranges = self.log_text.tag_ranges("_progress")
+            if ranges:
+                start = str(ranges[0])
+                end   = str(ranges[-1])
+                self.log_text.delete(start, end)
+                self.log_text.insert(start, progress_text,
+                                      ("_progress", "progress"))
+            else:
+                self.log_text.insert("end", progress_text,
+                                      ("_progress", "progress"))
+        else:
+            # First progress line in this sequence — clear old tag
+            self.log_text.tag_remove("_progress", "1.0", "end")
+            self.log_text.insert("end", progress_text,
+                                  ("_progress", "progress"))
+
+        self.log_text.see("end")
+        self.log_text.configure(state="disabled")
+        self._last_was_progress = True
 
     def _poll_log(self):
         try:
             while True:
                 kind, data = self.log_queue.get_nowait()
+
                 if kind == "line":
                     line = data
+
+                    # ── Tqdm progress bar filtering ───────────────────────────
+                    # Lines containing '%|' are tqdm progress updates.
+                    # Instead of appending 40+ lines per file, we keep ONE
+                    # line and update it in place.
+                    if "%|" in line:
+                        m = re.search(r"↓\s+(.+?):\s*(\d+)%", line)
+                        if m:
+                            fname = m.group(1).strip()
+                            pct   = m.group(2)
+                            self._log_progress(fname, pct)
+                            self._set_status(f"↓ {fname[:45]}… {pct}%")
+                        continue   # Don't also append to log
+
+                    # Skip tqdm blank clear lines that follow progress bars
+                    if self._last_was_progress and not line.strip():
+                        self._last_was_progress = False
+                        continue
+
+                    # ── Tag selection ─────────────────────────────────────────
                     if any(c in line for c in
                            ("✓", "Downloaded", "complete", "exists")):
                         tag = "success"
@@ -1095,7 +1145,7 @@ class CanvasArchiveApp:
                         tag = "warn"
                     elif any(c in line for c in
                              ("━", "Starting", "Saving", "Scanning",
-                              "Found", "Total")):
+                              "Found", "Total", "Fetching", "Processing")):
                         tag = "header"
                     elif any(p in line for p in _LOGIN_PHRASES):
                         tag = "login"
@@ -1104,10 +1154,9 @@ class CanvasArchiveApp:
 
                     self._log(line, tag)
 
-                    # Auth already done — no popup needed
+                    # Auth succeeded — dismiss any open login popup
                     if any(p in line for p in _AUTH_OK_PHRASES):
                         self._close_login_popup()
-
                     # Login needed — show popup
                     elif any(p in line for p in _LOGIN_PHRASES):
                         if self._login_popup is None:
@@ -1118,6 +1167,7 @@ class CanvasArchiveApp:
                     rc = data
                     self._stop_dots()
                     self._close_login_popup()
+                    self._last_was_progress = False
                     self._log(
                         "  Step complete.\n" if rc == 0
                         else f"  Finished with exit code {rc}.\n",
@@ -1135,8 +1185,7 @@ class CanvasArchiveApp:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def check_scripts() -> bool:
-    missing = [s for s in REQUIRED_SCRIPTS
-               if not (SCRIPT_DIR / s).exists()]
+    missing = [s for s in REQUIRED_SCRIPTS if not (SCRIPT_DIR / s).exists()]
     if missing:
         root = tk.Tk()
         root.withdraw()
@@ -1187,13 +1236,12 @@ def main():
         root.withdraw()
         messagebox.showinfo(
             "Already running",
-            "Canvas Archive is already open!\n\n"
-            "Check your Dock or taskbar.",
+            "Canvas Archive is already open!\n\nCheck your Dock or taskbar.",
         )
         root.destroy()
         sys.exit(0)
 
-    # Force light mode on Mac
+    # Encourage macOS to use light appearance
     if sys.platform == "darwin":
         try:
             subprocess.run(
@@ -1205,14 +1253,6 @@ def main():
             pass
 
     root = tk.Tk()
-
-    # Override dark mode colours explicitly
-    style = ttk.Style(root)
-    try:
-        style.theme_use("aqua" if sys.platform == "darwin" else "default")
-    except Exception:
-        pass
-
     root.update_idletasks()
     CanvasArchiveApp(root)
     root.mainloop()
