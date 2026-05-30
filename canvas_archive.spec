@@ -1,10 +1,18 @@
-# canvas_archive.spec
 import sys
+import os
 from pathlib import Path
+import playwright
 
 block_cipher = None
 
-# All downloader scripts bundled as data files
+# Find where Playwright stores Chromium on the build machine
+playwright_pkg = Path(playwright.__file__).parent
+driver_dir     = playwright_pkg / "driver"
+
+# Find the local-browsers directory
+local_browsers = driver_dir / "package" / ".local-browsers"
+
+# Build datas list
 datas = [
     ("canvas_auth.py",           "."),
     ("canvas_downloader.py",     "."),
@@ -12,7 +20,14 @@ datas = [
     ("panopto_downloader.py",    "."),
     ("reserves_downloader.py",   "."),
     ("patch_scripts.py",         "."),
+    # Bundle the entire Playwright driver (includes Chromium)
+    (str(driver_dir), "playwright/driver"),
 ]
+
+# Also bundle local browsers if they exist
+if local_browsers.exists():
+    datas.append((str(local_browsers),
+                  "playwright/driver/package/.local-browsers"))
 
 a = Analysis(
     ["canvas_archive.py"],
@@ -87,9 +102,9 @@ if sys.platform == "darwin":
         bundle_identifier="com.canvasarchive.app",
         info_plist={
             "NSHighResolutionCapable": True,
-            "CFBundleVersion": "1.0.0",
+            "CFBundleVersion":            "1.0.0",
             "CFBundleShortVersionString": "1.0.0",
-            "NSHumanReadableCopyright": "Free to use",
-            "LSApplicationCategoryType": "public.app-category.education",
+            "NSHumanReadableCopyright":   "Free to use",
+            "LSApplicationCategoryType":  "public.app-category.education",
         },
     )
