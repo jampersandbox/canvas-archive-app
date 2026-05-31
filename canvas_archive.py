@@ -485,14 +485,14 @@ class CanvasArchiveApp:
         self._redraw_lines()
 
     def _on_content_resize(self, e):
-    # Use the content frame height directly — not bbox("all") which
-    # includes the notebook lines and makes the scroll area too tall
-    content_height = self.main.winfo_reqheight()
-    self._bg.configure(
-        scrollregion=(0, 0, self._bg.winfo_width(), content_height + 20)
-    )
-    self._redraw_lines()
-
+        # Use the content frame height directly — not bbox("all") which
+        # includes the notebook lines and makes the scroll area too tall
+        content_height = self.main.winfo_reqheight()
+        self._bg.configure(
+            scrollregion=(0, 0, self._bg.winfo_width(), content_height + 20)
+        )
+        self._redraw_lines()
+        
     def _redraw_lines(self):
         """Draw notebook ruled lines across the full scroll area."""
         bbox = self._bg.bbox("all")
