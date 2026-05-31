@@ -27,7 +27,7 @@ jobs:
       - name: Install Python dependencies
         run: |
           pip install --upgrade pip
-          pip install pyinstaller pillow requests tqdm playwright yt-dlp
+          pip install pyinstaller pillow requests tqdm playwright yt-dlp customtkinter
 
       - name: Install Playwright browser
         run: playwright install chromium
@@ -149,8 +149,8 @@ jobs:
 
       - name: Install Python dependencies
         run: |
-          pip install --upgrade pip
-          pip install pyinstaller pillow requests tqdm playwright yt-dlp
+           --upgrade pip
+          pip install pyinstaller pillow requests tqdm playwright yt-dlp customtkinter
 
       - name: Install Playwright browser
         run: playwright install chromium
