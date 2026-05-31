@@ -1,15 +1,20 @@
 import sys
-from pathlib import Path
+import os
 
 block_cipher = None
 
+# Include customtkinter's asset folder in the bundle
+import customtkinter
+ctk_path = os.path.dirname(customtkinter.__file__)
+
 datas = [
-    ("canvas_auth.py",           "."),
-    ("canvas_downloader.py",     "."),
-    ("external_downloader.py",   "."),
-    ("panopto_downloader.py",    "."),
-    ("reserves_downloader.py",   "."),
-    ("patch_scripts.py",         "."),
+    ("canvas_auth.py",         "."),
+    ("canvas_downloader.py",   "."),
+    ("external_downloader.py", "."),
+    ("panopto_downloader.py",  "."),
+    ("reserves_downloader.py", "."),
+    ("patch_scripts.py",       "."),
+    (ctk_path,                 "customtkinter"),
 ]
 
 a = Analysis(
@@ -20,9 +25,18 @@ a = Analysis(
     hiddenimports=[
         "tkinter",
         "tkinter.ttk",
-        "tkinter.scrolledtext",
         "tkinter.filedialog",
         "tkinter.messagebox",
+        "customtkinter",
+        "PIL",
+        "PIL.Image",
+        "PIL.ImageTk",
+        "PIL.ImageDraw",
+        "PIL.ImageFont",
+        "PIL.ImageColor",
+        "darkdetect",
+        "packaging",
+        "packaging.version",
         "requests",
         "requests.adapters",
         "urllib3",
@@ -84,9 +98,9 @@ if sys.platform == "darwin":
         icon="icon.icns",
         bundle_identifier="com.canvasarchive.app",
         info_plist={
-            "NSHighResolutionCapable": True,
-            "CFBundleVersion":            "1.0.0",
-            "CFBundleShortVersionString": "1.0.0",
+            "NSHighResolutionCapable":    True,
+            "CFBundleVersion":            "1.0.9",
+            "CFBundleShortVersionString": "1.0.9",
             "NSHumanReadableCopyright":   "Free to use",
             "LSApplicationCategoryType":  "public.app-category.education",
         },
