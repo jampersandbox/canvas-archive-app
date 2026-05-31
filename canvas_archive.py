@@ -466,9 +466,12 @@ class CanvasArchiveApp:
         self._cw  = self._bg.create_window((0, 0), window=self.main, anchor="nw")
 
         self._bg.bind("<Configure>", self._on_bg_resize)
-        self.main.bind("<Configure>", self._on_content_resize)
-        for evt in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
-            self._bg.bind_all(evt, self._on_scroll)
+        self.main.bind("<Configure>", lambda e:
+            self._bg.configure(scrollregion=self._bg.bbox("all")))
+        for widget in (self._bg, self.main, self.root):
+            widget.bind("<MouseWheel>", self._on_scroll)
+        self._bg.bind_all("<Button-4>", self._on_scroll)
+        self._bg.bind_all("<Button-5>", self._on_scroll)
 
         self._build_what()
         self._build_settings()
@@ -482,8 +485,13 @@ class CanvasArchiveApp:
         self._redraw_lines()
 
     def _on_content_resize(self, e):
-        self._bg.configure(scrollregion=self._bg.bbox("all"))
-        self._redraw_lines()
+    # Use the content frame height directly — not bbox("all") which
+    # includes the notebook lines and makes the scroll area too tall
+    content_height = self.main.winfo_reqheight()
+    self._bg.configure(
+        scrollregion=(0, 0, self._bg.winfo_width(), content_height + 20)
+    )
+    self._redraw_lines()
 
     def _redraw_lines(self):
         """Draw notebook ruled lines across the full scroll area."""
@@ -496,11 +504,15 @@ class CanvasArchiveApp:
                                   fill=LINE_CLR, width=1, tags="nblines")
         self._bg.tag_lower("nblines")
 
-    def _on_scroll(self, e):
-        if e.num == 4:
-            self._bg.yview_scroll(-1, "units")
-        elif e.num == 5:
-            self._bg.yview_scroll(1, "units")
+   def _on_scroll(self, e):
+    if e.num == 4:
+        self._bg.yview_scroll(-1, "units")
+    elif e.num == 5:
+        self._bg.yview_scroll(1, "units")
+    else:
+        # macOS trackpad sends larger delta values than Windows mouse wheel
+        if sys.platform == "darwin":
+            self._bg.yview_scroll(int(-1 * e.delta), "units")
         else:
             self._bg.yview_scroll(int(-1 * (e.delta / 120)), "units")
 
