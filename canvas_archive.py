@@ -37,9 +37,6 @@ if len(sys.argv) >= 3 and sys.argv[1] == "--run-script":
 
     os.makedirs(data_dir, exist_ok=True)
 
-    # KEY FIX: data_dir first so the GUI's canvas_config.py takes precedence
-    # over any stale bundled version — this fixes Canvas URL not being passed
-    # correctly to the downloader scripts.
     for d in (data_dir, script_dir):
         if d not in sys.path:
             sys.path.insert(0, d)
@@ -77,25 +74,24 @@ import tkinter.ttk as ttk
 
 import customtkinter as ctk
 
-# Must be set before any CTk widget is created
 ctk.set_appearance_mode("light")
-ctk.set_default_color_theme("blue")   # we override everything manually below
+ctk.set_default_color_theme("blue")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-#  Design tokens  ·  matching archive-your-canvas.lovable.app
+#  Design tokens
 # ──────────────────────────────────────────────────────────────────────────────
-CREAM     = "#f5f0e8"   # warm notebook paper
-NAVY      = "#1a1a2e"   # text, borders, almost-black
-PURPLE    = "#4a00b0"   # header, accents, checkmarks
-PURPLE_L  = "#ede8ff"   # light purple — checked toggle fill
-GREEN     = "#2d8a3e"   # Start button
-GREEN_D   = "#236b31"   # Start button hover
-RED       = "#c0392b"   # Stop button (active)
-WHITE     = "#ffffff"   # card background
-LOG_BG    = "#0d0d1a"   # terminal background
-LOG_FG    = "#4ade80"   # terminal green text
-LINE_CLR  = "#ddd8ce"   # notebook ruled-line colour
+CREAM    = "#f5f0e8"
+NAVY     = "#1a1a2e"
+PURPLE   = "#4a00b0"
+PURPLE_L = "#ede8ff"
+GREEN    = "#2d8a3e"
+GREEN_D  = "#236b31"
+RED      = "#c0392b"
+WHITE    = "#ffffff"
+LOG_BG   = "#0d0d1a"
+LOG_FG   = "#4ade80"
+LINE_CLR = "#ddd8ce"
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -238,7 +234,6 @@ def _browser_installed() -> bool:
     return exe is not None and exe.exists()
 
 def install_browser_dialog(parent) -> bool:
-    """First-time 150 MB Chromium download with progress."""
     win = tk.Toplevel(parent)
     win.title("One-time setup")
     win.configure(bg=CREAM)
@@ -363,15 +358,15 @@ class CanvasArchiveApp:
         self.do_panopto   = tk.BooleanVar(value=cfg["do_panopto"])
         self.do_reserves  = tk.BooleanVar(value=cfg["do_reserves"])
 
-        self.running              = False
-        self.process              = None
-        self.log_queue            = queue.Queue()
-        self.script_queue         = []
-        self._login_popup         = None
-        self._dot_job             = None
-        self._last_was_progress   = False
-        self._caffeinate_proc     = None
-        self._url_combo           = None   # CTkComboBox reference
+        self.running            = False
+        self.process            = None
+        self.log_queue          = queue.Queue()
+        self.script_queue       = []
+        self._login_popup       = None
+        self._dot_job           = None
+        self._last_was_progress = False
+        self._caffeinate_proc   = None
+        self._url_combo         = None
 
         if SENTINEL_FILE.exists():
             try: SENTINEL_FILE.unlink()
@@ -449,7 +444,7 @@ class CanvasArchiveApp:
         )
         self.status_lbl.pack(pady=(8, 0))
 
-        # ── Scrollable middle with notebook-paper background ───────────────────
+        # ── Scrollable middle ──────────────────────────────────────────────────
         sc = tk.Frame(self.root, bg=CREAM)
         sc.pack(fill="both", expand=True)
 
@@ -466,8 +461,7 @@ class CanvasArchiveApp:
         self._cw  = self._bg.create_window((0, 0), window=self.main, anchor="nw")
 
         self._bg.bind("<Configure>", self._on_bg_resize)
-        self.main.bind("<Configure>", lambda e:
-            self._bg.configure(scrollregion=self._bg.bbox("all")))
+        self.main.bind("<Configure>", self._on_content_resize)
         for widget in (self._bg, self.main, self.root):
             widget.bind("<MouseWheel>", self._on_scroll)
         self._bg.bind_all("<Button-4>", self._on_scroll)
@@ -478,23 +472,31 @@ class CanvasArchiveApp:
         self._build_options()
         self._build_log()
 
-    # ── Canvas/scroll callbacks ───────────────────────────────────────────────
+    # ── Canvas / scroll callbacks ─────────────────────────────────────────────
 
     def _on_bg_resize(self, e):
         self._bg.itemconfig(self._cw, width=e.width)
         self._redraw_lines()
 
     def _on_content_resize(self, e):
-        # Use the content frame height directly — not bbox("all") which
-        # includes the notebook lines and makes the scroll area too tall
         content_height = self.main.winfo_reqheight()
         self._bg.configure(
             scrollregion=(0, 0, self._bg.winfo_width(), content_height + 20)
         )
         self._redraw_lines()
-        
+
+    def _on_scroll(self, e):
+        if e.num == 4:
+            self._bg.yview_scroll(-1, "units")
+        elif e.num == 5:
+            self._bg.yview_scroll(1, "units")
+        else:
+            if sys.platform == "darwin":
+                self._bg.yview_scroll(int(-1 * e.delta), "units")
+            else:
+                self._bg.yview_scroll(int(-1 * (e.delta / 120)), "units")
+
     def _redraw_lines(self):
-        """Draw notebook ruled lines across the full scroll area."""
         bbox = self._bg.bbox("all")
         w    = self._bg.winfo_width()
         h    = (bbox[3] if bbox else 0) + 60
@@ -504,22 +506,9 @@ class CanvasArchiveApp:
                                   fill=LINE_CLR, width=1, tags="nblines")
         self._bg.tag_lower("nblines")
 
-   def _on_scroll(self, e):
-    if e.num == 4:
-        self._bg.yview_scroll(-1, "units")
-    elif e.num == 5:
-        self._bg.yview_scroll(1, "units")
-    else:
-        # macOS trackpad sends larger delta values than Windows mouse wheel
-        if sys.platform == "darwin":
-            self._bg.yview_scroll(int(-1 * e.delta), "units")
-        else:
-            self._bg.yview_scroll(int(-1 * (e.delta / 120)), "units")
-
     # ── Card helper ───────────────────────────────────────────────────────────
 
     def _card(self, title: str | None = None) -> tk.Frame:
-        """White card with thick navy border, matching the Lovable site."""
         outer = tk.Frame(self.main, bg=NAVY, padx=2, pady=2)
         outer.pack(fill="x", pady=(0, 16))
         inner = tk.Frame(outer, bg=WHITE, padx=20, pady=16)
@@ -532,7 +521,7 @@ class CanvasArchiveApp:
             ).pack(anchor="w", pady=(0, 12))
         return inner
 
-    # ── "What to download" pill toggles ───────────────────────────────────────
+    # ── Pill toggles ──────────────────────────────────────────────────────────
 
     def _build_what(self):
         card = self._card("What would you like to download?")
@@ -556,12 +545,9 @@ class CanvasArchiveApp:
 
     def _pill_toggle(self, parent, var: tk.BooleanVar,
                      label: str, desc: str, row: int, col: int):
-        """
-        Pill-shaped toggle matching the app mockup:
-          ON  — light purple fill, filled purple circle
-          OFF — white fill, empty grey circle
-        Click anywhere on the card to toggle.
-        """
+        bg_on  = PURPLE_L
+        bg_off = WHITE
+
         outer = tk.Frame(parent, bg=NAVY, padx=2, pady=2)
         outer.grid(row=row, column=col, padx=5, pady=5, sticky="nsew")
         inner = tk.Frame(outer, bg=WHITE, padx=14, pady=12)
@@ -571,9 +557,9 @@ class CanvasArchiveApp:
             var.set(not var.get())
 
         def refresh(*_):
-            bg       = PURPLE_L if var.get() else WHITE
+            bg       = bg_on if var.get() else bg_off
             icon     = "●" if var.get() else "○"
-            icon_clr = PURPLE   if var.get() else "#cccccc"
+            icon_clr = PURPLE if var.get() else "#cccccc"
             for w in (inner, row_f):
                 w.configure(bg=bg)
             icon_lbl.configure(bg=bg, text=icon, fg=icon_clr)
@@ -617,7 +603,6 @@ class CanvasArchiveApp:
     def _build_settings(self):
         card = self._card("Settings")
 
-        # Canvas URL
         r1 = tk.Frame(card, bg=WHITE)
         r1.pack(fill="x", pady=4)
         tk.Label(
@@ -643,7 +628,6 @@ class CanvasArchiveApp:
         )
         self._url_combo.pack(side="left", padx=(8, 0))
 
-        # Save-to directory
         r2 = tk.Frame(card, bg=WHITE)
         r2.pack(fill="x", pady=4)
         tk.Label(
@@ -697,10 +681,6 @@ class CanvasArchiveApp:
     # ── Terminal log ──────────────────────────────────────────────────────────
 
     def _build_log(self):
-        """
-        Dark terminal log. Uses standard tk.Text (not CTkTextbox) so that
-        colour tags (success/error/warn etc.) work correctly.
-        """
         outer = tk.Frame(self.main, bg=NAVY, padx=2, pady=2)
         outer.pack(fill="both", expand=True, pady=(0, 8))
 
@@ -814,7 +794,7 @@ class CanvasArchiveApp:
         self._log("  Logged in — continuing…\n\n", "success")
         self._set_status("Continuing download…")
 
-    # ── Status + animated dots ────────────────────────────────────────────────
+    # ── Status + dots ─────────────────────────────────────────────────────────
 
     def _set_status(self, text: str, fg: str = PURPLE):
         self.status_var.set(text)
@@ -880,7 +860,6 @@ class CanvasArchiveApp:
                 )
                 return
 
-        # Read URL from the combo widget directly (most reliable)
         canvas_url = (
             self._url_combo.get() if self._url_combo
             else self.canvas_url.get()
@@ -1080,7 +1059,6 @@ class CanvasArchiveApp:
         self._last_was_progress = False
 
     def _log_progress(self, fname: str, pct: str):
-        """Update a single in-place progress line instead of spamming new ones."""
         text = f"  ↓ {fname[:56]}… {pct}%\n"
         self.log_text.configure(state="normal")
         if self._last_was_progress:
@@ -1106,7 +1084,6 @@ class CanvasArchiveApp:
                 if kind == "line":
                     line = data
 
-                    # Tqdm progress — update in place
                     if "%|" in line:
                         m = re.search(r"↓\s+(.+?):\s*(\d+)%", line)
                         if m:
