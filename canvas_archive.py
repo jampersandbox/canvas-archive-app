@@ -851,6 +851,18 @@ class CanvasArchiveApp:
         if self.running:
             return
 
+        # Always clear cookies on start — forces fresh login every time.
+        # Prevents silent 401 failures from stale sessions.
+        for cookie_file in [
+            DATA_DIR / "canvas_cookies.json",
+            DATA_DIR / "panopto_cookies.txt",
+        ]:
+            if cookie_file.exists():
+                try:
+                    cookie_file.unlink()
+                except Exception:
+                    pass
+
         if not _browser_installed():
             ok = install_browser_dialog(self.root)
             if not ok:
