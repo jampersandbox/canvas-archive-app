@@ -13,7 +13,7 @@ jobs:
   build-mac:
     runs-on: macos-latest
     permissions:
-      contents: write    # ← fixes "Resource not accessible" error
+      contents: write
 
     steps:
       - name: Checkout app repo
@@ -29,20 +29,15 @@ jobs:
           pip install --upgrade pip
           pip install pyinstaller pillow requests tqdm playwright yt-dlp customtkinter
 
-      - name: Install Playwright browser
+      - name: Install Playwright browser into bundle folder
         run: playwright install chromium
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/playwright_browsers
 
-      - name: Copy Playwright browsers into bundle
+      - name: Verify browser was installed
         run: |
-          mkdir -p playwright_browsers
-          if [ -d "$HOME/Library/Caches/ms-playwright" ]; then
-            cp -r "$HOME/Library/Caches/ms-playwright/." playwright_browsers/
-            echo "Copied browsers:"
-            ls playwright_browsers/
-          else
-            echo "WARNING: No playwright browsers found"
-            exit 1
-          fi
+          echo "Contents of playwright_browsers:"
+          ls -la playwright_browsers/ || echo "WARNING: playwright_browsers is empty or missing"
 
       - name: Download scripts from canvas-archive
         run: |
@@ -78,7 +73,6 @@ jobs:
 
       - name: Create DMG
         run: |
-          # Try create-dmg first
           create-dmg \
             --volname "Canvas Archive" \
             --volicon "icon.icns" \
@@ -92,7 +86,6 @@ jobs:
             "dist/Canvas Archive.app" \
           || true
 
-          # Fallback to zip if DMG creation failed
           if [ ! -f "Canvas-Archive-Mac.dmg" ]; then
             echo "create-dmg failed — creating zip instead"
             cd dist
@@ -100,7 +93,6 @@ jobs:
             cd ..
           fi
 
-          # Show what we have
           ls -lh Canvas-Archive-Mac.* || echo "No output files found"
 
       - name: Upload to Release
@@ -148,7 +140,7 @@ jobs:
   build-windows:
     runs-on: windows-latest
     permissions:
-      contents: write    # ← fixes "Resource not accessible" error
+      contents: write
 
     steps:
       - name: Checkout app repo
@@ -164,21 +156,18 @@ jobs:
           pip install --upgrade pip
           pip install pyinstaller pillow requests tqdm playwright yt-dlp customtkinter
 
-      - name: Install Playwright browser
+      - name: Install Playwright browser into bundle folder
         run: playwright install chromium
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}\playwright_browsers
 
-      - name: Copy Playwright browsers into bundle
-        shell: powershell
+      - name: Verify browser was installed
         run: |
-          New-Item -ItemType Directory -Force playwright_browsers
-          $src = "$env:LOCALAPPDATA\ms-playwright"
-          if (Test-Path $src) {
-            Copy-Item "$src\*" playwright_browsers -Recurse -Force
-            Write-Host "Copied browsers:"
+          Write-Host "Contents of playwright_browsers:"
+          if (Test-Path "playwright_browsers") {
             Get-ChildItem playwright_browsers
           } else {
-            Write-Host "WARNING: Playwright browsers not found at $src"
-            exit 1
+            Write-Host "WARNING: playwright_browsers is empty or missing"
           }
 
       - name: Download scripts from canvas-archive
@@ -198,7 +187,6 @@ jobs:
           }
 
       - name: Generate icons
-        # Force UTF-8 output so checkmarks don't crash Windows
         env:
           PYTHONIOENCODING: utf-8
           PYTHONUTF8: "1"
@@ -228,7 +216,6 @@ jobs:
           if (Test-Path $nsis) {
             & $nsis installer.nsi
           } else {
-            # Try finding it wherever choco installed it
             $found = Get-ChildItem "C:\Program Files*\NSIS\makensis.exe" `
                      -ErrorAction SilentlyContinue | Select-Object -First 1
             if ($found) {
