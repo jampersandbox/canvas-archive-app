@@ -32,6 +32,18 @@ jobs:
       - name: Install Playwright browser
         run: playwright install chromium
 
+      - name: Copy Playwright browsers into bundle
+        run: |
+          mkdir -p playwright_browsers
+          if [ -d "$HOME/Library/Caches/ms-playwright" ]; then
+            cp -r "$HOME/Library/Caches/ms-playwright/." playwright_browsers/
+            echo "Copied browsers:"
+            ls playwright_browsers/
+          else
+            echo "WARNING: No playwright browsers found"
+            exit 1
+          fi
+
       - name: Download scripts from canvas-archive
         run: |
           BASE="https://raw.githubusercontent.com/jampersandbox/canvas-archive/main"
@@ -154,6 +166,20 @@ jobs:
 
       - name: Install Playwright browser
         run: playwright install chromium
+
+      - name: Copy Playwright browsers into bundle
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force playwright_browsers
+          $src = "$env:LOCALAPPDATA\ms-playwright"
+          if (Test-Path $src) {
+            Copy-Item "$src\*" playwright_browsers -Recurse -Force
+            Write-Host "Copied browsers:"
+            Get-ChildItem playwright_browsers
+          } else {
+            Write-Host "WARNING: Playwright browsers not found at $src"
+            exit 1
+          }
 
       - name: Download scripts from canvas-archive
         run: |
