@@ -269,16 +269,13 @@ def install_browser_dialog(parent) -> bool:
     tk.Label(card, textvariable=sv,
              font=("Helvetica", 10), fg=PURPLE, bg=CREAM).pack()
 
-    result = {"ok": False}
+    result = {"ok": False, "error": None}
 
     def _run():
         try:
             env = os.environ.copy()
             env["PLAYWRIGHT_BROWSERS_PATH"] = str(_playwright_browsers_dir())
 
-            # KEY FIX: In a frozen PyInstaller app, sys.executable points to
-            # the app bundle itself — not Python. We must find and use
-            # playwright's driver binary directly from inside the bundle.
             if getattr(sys, "frozen", False):
                 try:
                     import playwright
@@ -288,37 +285,73 @@ def install_browser_dialog(parent) -> bool:
                         driver = driver_dir / "playwright"
                     else:
                         driver = driver_dir / "playwright.cmd"
+
                     if not driver.exists():
-                        sv.set("Playwright driver not found in app bundle.")
+                        sv.set(f"Driver not found at: {driver}")
+                        result["error"] = f"Driver not found: {driver}"
                         return
+
+                    # Ensure driver is executable on Mac/Linux
+                    if sys.platform != "win32":
+                        import stat
+                        driver.chmod(
+                            driver.stat().st_mode
+                            | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH
+                        )
+
                     cmd = [str(driver), "install", "chromium"]
+
                 except Exception as exc:
                     sv.set(f"Setup error: {exc}")
+                    result["error"] = str(exc)
                     return
             else:
                 cmd = [sys.executable, "-m", "playwright", "install", "chromium"]
 
+            sv.set("Starting download…")
             proc = subprocess.Popen(
                 cmd,
-                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                universal_newlines=True, env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                universal_newlines=True,
+                env=env,
             )
             for line in proc.stdout:
                 stripped = line.strip()
                 if stripped:
                     sv.set(stripped[:68])
             proc.wait()
-            result["ok"] = proc.returncode == 0 and _browser_installed()
-            sv.set("Browser ready! ✓" if result["ok"]
-                   else "Download failed — please try again.")
+
+            if proc.returncode != 0:
+                sv.set(f"Download failed (exit code {proc.returncode})")
+                result["error"] = f"Exit code {proc.returncode}"
+                return
+
+            if _browser_installed():
+                result["ok"] = True
+                sv.set("Browser ready! ✓")
+            else:
+                sv.set("Download finished but browser not found — please retry.")
+                result["error"] = "Browser not found after download"
+
         except Exception as exc:
             sv.set(f"Error: {exc}")
+            result["error"] = str(exc)
         finally:
             bar.stop()
             win.after(1800, win.destroy)
 
     threading.Thread(target=_run, daemon=True).start()
     win.wait_window()
+
+    if not result["ok"] and result["error"]:
+        messagebox.showerror(
+            "Setup failed",
+            f"Could not download the browser.\n\nError: {result['error']}\n\n"
+            "Please try restarting the app.\n"
+            "If this keeps happening, contact Jordan at jlbampersand@gmail.com",
+            parent=parent,
+        )
     return result["ok"]
 
 
@@ -874,8 +907,8 @@ class CanvasArchiveApp:
         if self.running:
             return
 
-        # KEY FIX: Always clear cookies on start — forces fresh login every
-        # time. Prevents silent 401 failures from stale/expired sessions.
+        # Always clear cookies on start — forces fresh login every time.
+        # Prevents silent 401 failures from stale/expired sessions.
         for cookie_file in [
             DATA_DIR / "canvas_cookies.json",
             DATA_DIR / "panopto_cookies.txt",
