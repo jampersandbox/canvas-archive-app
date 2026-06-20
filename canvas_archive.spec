@@ -20,6 +20,7 @@ datas = [
     ("patch_scripts.py",       "."),
     (ctk_path,                 "customtkinter"),
     (os.path.join(playwright_dir, "driver"), "playwright/driver"),
+    ("playwright_browsers", "playwright_browsers"),
 ]
 
 a = Analysis(
@@ -107,8 +108,8 @@ if sys.platform == "darwin":
         bundle_identifier="com.canvasarchive.app",
         info_plist={
             "NSHighResolutionCapable":    True,
-            "CFBundleVersion":            "1.0.29",
-            "CFBundleShortVersionString": "1.0.29",
+            "CFBundleVersion":            "1.0.30",
+            "CFBundleShortVersionString": "1.0.30",
             "NSHumanReadableCopyright":   "Free to use",
             "LSApplicationCategoryType":  "public.app-category.education",
         },

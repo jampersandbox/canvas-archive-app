@@ -93,7 +93,7 @@ LOG_BG   = "#0d0d1a"
 LOG_FG   = "#4ade80"
 LINE_CLR = "#ddd8ce"
 
-CURRENT_VERSION = "1.0.29"
+CURRENT_VERSION = "1.0.30"
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -116,6 +116,15 @@ def _get_data_dir() -> Path:
     return d
 
 def _playwright_browsers_dir() -> Path:
+    """
+    Return the directory where playwright should look for browsers.
+    In a frozen app, use the pre-bundled browsers shipped with the app.
+    In development, use the user's playwright cache.
+    """
+    if getattr(sys, "frozen", False):
+        bundled = Path(sys._MEIPASS) / "playwright_browsers"
+        if bundled.exists():
+            return bundled
     if sys.platform == "darwin":
         return Path.home() / "Library" / "Caches" / "ms-playwright"
     elif sys.platform.startswith("win"):
@@ -170,48 +179,6 @@ _AUTH_OK_PHRASES = [
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-#  Config
-# ──────────────────────────────────────────────────────────────────────────────
-def load_config() -> dict:
-    defaults = {
-        "canvas_url":   "https://canvas.harvard.edu",
-        "panopto_url":  "https://harvard.hosted.panopto.com",
-        "output_dir":   str(Path.home() / "Documents" / "canvas_downloads"),
-        "skip_ongoing": True,
-        "skip_videos":  False,
-        "do_canvas":    True,
-        "do_external":  True,
-        "do_panopto":   True,
-        "do_reserves":  True,
-    }
-    if CONFIG_FILE.exists():
-        try:
-            saved = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
-            if isinstance(saved, dict):
-                defaults.update(saved)
-        except Exception:
-            pass
-    return defaults
-
-def save_config(cfg: dict) -> None:
-    CONFIG_FILE.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
-
-def write_canvas_config(canvas_url: str, panopto_url: str,
-                        output_dir: str = "") -> None:
-    (DATA_DIR / "canvas_config.py").write_text(
-        f"CANVAS_BASE_URL  = {canvas_url!r}\n"
-        f"PANOPTO_BASE_URL = {panopto_url!r}\n",
-        encoding="utf-8",
-    )
-    cfg = {"canvas_url": canvas_url, "panopto_url": panopto_url}
-    if output_dir:
-        cfg["output_dir"] = _abs(output_dir)
-    (DATA_DIR / "canvas_config.json").write_text(
-        json.dumps(cfg, indent=2), encoding="utf-8"
-    )
-
-
-# ──────────────────────────────────────────────────────────────────────────────
 #  Update checker
 # ──────────────────────────────────────────────────────────────────────────────
 def _check_for_updates(callback):
@@ -243,7 +210,7 @@ def _check_for_updates(callback):
             if _parse(latest) > _parse(CURRENT_VERSION):
                 callback(latest)
         except Exception:
-            pass   # Silently ignore — no internet, rate limit, etc.
+            pass
 
     threading.Thread(target=_run, daemon=True).start()
 
@@ -272,55 +239,31 @@ def _browser_installed() -> bool:
     exe = _chromium_exe()
     return exe is not None and exe.exists()
 
-def _find_playwright_driver() -> tuple[Path | None, str]:
+def _ensure_browser_executable():
     """
-    Search for the playwright driver binary inside the frozen bundle.
-    Returns (driver_path, diagnostic_message).
+    Make sure the bundled Chromium binary is executable.
+    PyInstaller sometimes strips execute permissions.
     """
-    import stat as _stat
-    try:
-        import playwright
-        pw_dir  = Path(playwright.__file__).parent
-        meipass = Path(sys._MEIPASS)
-
-        if sys.platform == "darwin" or sys.platform.startswith("linux"):
-            names = ["playwright", "node"]
-        else:
-            names = ["playwright.cmd", "playwright.ps1", "playwright.exe"]
-
-        search_dirs = [
-            pw_dir / "driver",
-            meipass / "playwright" / "driver",
-            meipass / "driver",
-            pw_dir / "driver" / "package" / "node_modules" / ".bin",
-        ]
-
-        for d in search_dirs:
-            for name in names:
-                candidate = d / name
-                if candidate.exists():
-                    if sys.platform != "win32":
-                        candidate.chmod(
-                            candidate.stat().st_mode
-                            | _stat.S_IEXEC | _stat.S_IXGRP | _stat.S_IXOTH
-                        )
-                    return candidate, f"Found at {candidate}"
-
-        diag_lines = [f"playwright dir: {pw_dir}"]
-        for d in search_dirs:
-            if d.exists():
-                contents = [f.name for f in sorted(d.iterdir())]
-                diag_lines.append(f"  {d.name}/: {contents}")
-            else:
-                diag_lines.append(f"  {d.name}/: (does not exist)")
-
-        return None, "\n".join(diag_lines)
-
-    except Exception as exc:
-        return None, f"Exception during search: {exc}"
-
+    if not getattr(sys, "frozen", False):
+        return
+    if sys.platform == "win32":
+        return
+    exe = _chromium_exe()
+    if exe and exe.exists():
+        try:
+            import stat
+            exe.chmod(
+                exe.stat().st_mode
+                | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH
+            )
+        except Exception:
+            pass
 
 def install_browser_dialog(parent) -> bool:
+    """
+    Only used in development (non-frozen) mode.
+    In the frozen app, Chromium is pre-bundled — no installation needed.
+    """
     win = tk.Toplevel(parent)
     win.title("One-time setup")
     win.configure(bg=CREAM)
@@ -362,25 +305,7 @@ def install_browser_dialog(parent) -> bool:
         try:
             env = os.environ.copy()
             env["PLAYWRIGHT_BROWSERS_PATH"] = str(_playwright_browsers_dir())
-
-            if getattr(sys, "frozen", False):
-                sv.set("Locating browser installer…")
-                driver, diag = _find_playwright_driver()
-
-                if driver is None:
-                    result["error"] = (
-                        f"Playwright driver not found inside app bundle.\n\n"
-                        f"Diagnostic info:\n{diag}"
-                    )
-                    sv.set("Driver not found — see error details")
-                    return
-
-                sv.set("Found installer — starting download…")
-                cmd = [str(driver), "install", "chromium"]
-
-            else:
-                cmd = [sys.executable, "-m", "playwright", "install", "chromium"]
-
+            cmd = [sys.executable, "-m", "playwright", "install", "chromium"]
             proc = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
@@ -393,19 +318,16 @@ def install_browser_dialog(parent) -> bool:
                 if stripped:
                     sv.set(stripped[:68])
             proc.wait()
-
             if proc.returncode != 0:
-                sv.set(f"Download failed (exit code {proc.returncode})")
                 result["error"] = f"Installer exited with code {proc.returncode}"
+                sv.set("Download failed — please try again.")
                 return
-
             if _browser_installed():
                 result["ok"] = True
                 sv.set("Browser ready! ✓")
             else:
-                sv.set("Download finished but browser not found — please retry.")
-                result["error"] = "Browser not found after download completed"
-
+                result["error"] = "Browser not found after download"
+                sv.set("Download finished but browser not found.")
         except Exception as exc:
             sv.set(f"Error: {exc}")
             result["error"] = str(exc)
@@ -419,10 +341,8 @@ def install_browser_dialog(parent) -> bool:
     if not result["ok"] and result["error"]:
         messagebox.showerror(
             "Setup failed",
-            f"Could not download the browser.\n\n"
-            f"Error details:\n{result['error']}\n\n"
-            f"Please screenshot this message and send it to:\n"
-            f"jlbampersand@gmail.com",
+            f"Could not download the browser.\n\nError: {result['error']}\n\n"
+            f"Please contact: jlbampersand@gmail.com",
             parent=parent,
         )
     return result["ok"]
@@ -502,6 +422,9 @@ class CanvasArchiveApp:
             try: SENTINEL_FILE.unlink()
             except Exception: pass
 
+        # Ensure bundled browser binary is executable
+        _ensure_browser_executable()
+
         self._build_ui()
         self._poll_log()
         self.root.after(800, self._check_browser)
@@ -513,18 +436,30 @@ class CanvasArchiveApp:
 
     def _check_browser(self):
         if not _browser_installed():
-            ok = install_browser_dialog(self.root)
-            if not ok:
-                messagebox.showwarning(
-                    "Browser not installed",
-                    "Canvas Archive needs a browser to log in to Canvas.\n"
-                    "Please restart the app to try again.",
+            if getattr(sys, "frozen", False):
+                # In the frozen app, Chromium is pre-bundled.
+                # If it's not found, something is wrong with the installation.
+                messagebox.showerror(
+                    "Browser not found",
+                    "The bundled browser is missing from the app.\n\n"
+                    "Please reinstall Canvas Archive from:\n"
+                    "archive-your-canvas.lovable.app\n\n"
+                    "If this keeps happening:\n"
+                    "jlbampersand@gmail.com",
                 )
+            else:
+                # In development mode, offer to install
+                ok = install_browser_dialog(self.root)
+                if not ok:
+                    messagebox.showwarning(
+                        "Browser not installed",
+                        "Canvas Archive needs a browser to log in to Canvas.\n"
+                        "Please restart the app to try again.",
+                    )
 
     # ── Update banner ─────────────────────────────────────────────────────────
 
     def _show_update_banner(self, latest_version: str):
-        """Show a gentle update notification banner below the header."""
         if self._update_banner is not None:
             return
 
@@ -1039,13 +974,22 @@ class CanvasArchiveApp:
                     pass
 
         if not _browser_installed():
-            ok = install_browser_dialog(self.root)
-            if not ok:
+            if getattr(sys, "frozen", False):
                 messagebox.showerror(
-                    "Browser required",
-                    "Canvas Archive needs a browser to work.\nPlease try again.",
+                    "Browser not found",
+                    "The bundled browser is missing.\n"
+                    "Please reinstall Canvas Archive from:\n"
+                    "archive-your-canvas.lovable.app",
                 )
                 return
+            else:
+                ok = install_browser_dialog(self.root)
+                if not ok:
+                    messagebox.showerror(
+                        "Browser required",
+                        "Canvas Archive needs a browser to work.\nPlease try again.",
+                    )
+                    return
 
         canvas_url = (
             self._url_combo.get() if self._url_combo
@@ -1325,6 +1269,49 @@ class CanvasArchiveApp:
         except queue.Empty:
             pass
         self.root.after(100, self._poll_log)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+#  Config helpers
+# ──────────────────────────────────────────────────────────────────────────────
+
+def load_config() -> dict:
+    defaults = {
+        "canvas_url":   "https://canvas.harvard.edu",
+        "panopto_url":  "https://harvard.hosted.panopto.com",
+        "output_dir":   str(Path.home() / "Documents" / "canvas_downloads"),
+        "skip_ongoing": True,
+        "skip_videos":  False,
+        "do_canvas":    True,
+        "do_external":  True,
+        "do_panopto":   True,
+        "do_reserves":  True,
+    }
+    if CONFIG_FILE.exists():
+        try:
+            saved = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+            if isinstance(saved, dict):
+                defaults.update(saved)
+        except Exception:
+            pass
+    return defaults
+
+def save_config(cfg: dict) -> None:
+    CONFIG_FILE.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+
+def write_canvas_config(canvas_url: str, panopto_url: str,
+                        output_dir: str = "") -> None:
+    (DATA_DIR / "canvas_config.py").write_text(
+        f"CANVAS_BASE_URL  = {canvas_url!r}\n"
+        f"PANOPTO_BASE_URL = {panopto_url!r}\n",
+        encoding="utf-8",
+    )
+    cfg = {"canvas_url": canvas_url, "panopto_url": panopto_url}
+    if output_dir:
+        cfg["output_dir"] = _abs(output_dir)
+    (DATA_DIR / "canvas_config.json").write_text(
+        json.dumps(cfg, indent=2), encoding="utf-8"
+    )
 
 
 # ──────────────────────────────────────────────────────────────────────────────
