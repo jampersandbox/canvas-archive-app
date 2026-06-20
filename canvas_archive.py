@@ -275,8 +275,31 @@ def install_browser_dialog(parent) -> bool:
         try:
             env = os.environ.copy()
             env["PLAYWRIGHT_BROWSERS_PATH"] = str(_playwright_browsers_dir())
+
+            # KEY FIX: In a frozen PyInstaller app, sys.executable points to
+            # the app bundle itself — not Python. We must find and use
+            # playwright's driver binary directly from inside the bundle.
+            if getattr(sys, "frozen", False):
+                try:
+                    import playwright
+                    from pathlib import Path as _Path
+                    driver_dir = _Path(playwright.__file__).parent / "driver"
+                    if sys.platform == "darwin" or sys.platform.startswith("linux"):
+                        driver = driver_dir / "playwright"
+                    else:
+                        driver = driver_dir / "playwright.cmd"
+                    if not driver.exists():
+                        sv.set("Playwright driver not found in app bundle.")
+                        return
+                    cmd = [str(driver), "install", "chromium"]
+                except Exception as exc:
+                    sv.set(f"Setup error: {exc}")
+                    return
+            else:
+                cmd = [sys.executable, "-m", "playwright", "install", "chromium"]
+
             proc = subprocess.Popen(
-                [sys.executable, "-m", "playwright", "install", "chromium"],
+                cmd,
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                 universal_newlines=True, env=env,
             )
@@ -851,8 +874,8 @@ class CanvasArchiveApp:
         if self.running:
             return
 
-        # Always clear cookies on start — forces fresh login every time.
-        # Prevents silent 401 failures from stale sessions.
+        # KEY FIX: Always clear cookies on start — forces fresh login every
+        # time. Prevents silent 401 failures from stale/expired sessions.
         for cookie_file in [
             DATA_DIR / "canvas_cookies.json",
             DATA_DIR / "panopto_cookies.txt",

@@ -3,9 +3,13 @@ import os
 
 block_cipher = None
 
-# Include customtkinter's asset folder in the bundle
+# ── CustomTkinter assets ──────────────────────────────────────────────────────
 import customtkinter
 ctk_path = os.path.dirname(customtkinter.__file__)
+
+# ── Playwright driver ─────────────────────────────────────────────────────────
+import playwright
+playwright_dir = os.path.dirname(playwright.__file__)
 
 datas = [
     ("canvas_auth.py",         "."),
@@ -15,6 +19,7 @@ datas = [
     ("reserves_downloader.py", "."),
     ("patch_scripts.py",       "."),
     (ctk_path,                 "customtkinter"),
+    (os.path.join(playwright_dir, "driver"), "playwright/driver"),
 ]
 
 a = Analysis(
@@ -99,8 +104,8 @@ if sys.platform == "darwin":
         bundle_identifier="com.canvasarchive.app",
         info_plist={
             "NSHighResolutionCapable":    True,
-            "CFBundleVersion":            "1.0.9",
-            "CFBundleShortVersionString": "1.0.9",
+            "CFBundleVersion":            "1.0.23",
+            "CFBundleShortVersionString": "1.0.23",
             "NSHumanReadableCopyright":   "Free to use",
             "LSApplicationCategoryType":  "public.app-category.education",
         },
