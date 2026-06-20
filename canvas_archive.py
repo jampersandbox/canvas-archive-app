@@ -233,6 +233,61 @@ def _browser_installed() -> bool:
     exe = _chromium_exe()
     return exe is not None and exe.exists()
 
+def _find_playwright_driver() -> tuple[Path | None, str]:
+    """
+    Search for the playwright driver binary inside the frozen bundle.
+    Returns (driver_path, diagnostic_message).
+    driver_path is None if not found.
+    """
+    import stat as _stat
+
+    try:
+        import playwright
+        pw_file  = Path(playwright.__file__)
+        pw_dir   = pw_file.parent
+        meipass  = Path(sys._MEIPASS)
+
+        # Binary names to look for, in order of preference
+        if sys.platform == "darwin" or sys.platform.startswith("linux"):
+            names = ["playwright", "node"]
+        else:
+            names = ["playwright.cmd", "playwright.ps1", "playwright.exe"]
+
+        # Directories to search, in order of preference
+        search_dirs = [
+            pw_dir / "driver",
+            meipass / "playwright" / "driver",
+            meipass / "driver",
+            pw_dir / "driver" / "package" / "node_modules" / ".bin",
+        ]
+
+        for d in search_dirs:
+            for name in names:
+                candidate = d / name
+                if candidate.exists():
+                    # Make executable
+                    if sys.platform != "win32":
+                        candidate.chmod(
+                            candidate.stat().st_mode
+                            | _stat.S_IEXEC | _stat.S_IXGRP | _stat.S_IXOTH
+                        )
+                    return candidate, f"Found at {candidate}"
+
+        # Not found — build diagnostic
+        diag_lines = [f"playwright dir: {pw_dir}"]
+        for d in search_dirs:
+            if d.exists():
+                contents = [f.name for f in sorted(d.iterdir())]
+                diag_lines.append(f"  {d.name}/: {contents}")
+            else:
+                diag_lines.append(f"  {d.name}/: (does not exist)")
+
+        return None, "\n".join(diag_lines)
+
+    except Exception as exc:
+        return None, f"Exception during search: {exc}"
+
+
 def install_browser_dialog(parent) -> bool:
     win = tk.Toplevel(parent)
     win.title("One-time setup")
@@ -277,38 +332,23 @@ def install_browser_dialog(parent) -> bool:
             env["PLAYWRIGHT_BROWSERS_PATH"] = str(_playwright_browsers_dir())
 
             if getattr(sys, "frozen", False):
-                try:
-                    import playwright
-                    from pathlib import Path as _Path
-                    driver_dir = _Path(playwright.__file__).parent / "driver"
-                    if sys.platform == "darwin" or sys.platform.startswith("linux"):
-                        driver = driver_dir / "playwright"
-                    else:
-                        driver = driver_dir / "playwright.cmd"
+                sv.set("Locating browser installer…")
+                driver, diag = _find_playwright_driver()
 
-                    if not driver.exists():
-                        sv.set(f"Driver not found at: {driver}")
-                        result["error"] = f"Driver not found: {driver}"
-                        return
-
-                    # Ensure driver is executable on Mac/Linux
-                    if sys.platform != "win32":
-                        import stat
-                        driver.chmod(
-                            driver.stat().st_mode
-                            | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH
-                        )
-
-                    cmd = [str(driver), "install", "chromium"]
-
-                except Exception as exc:
-                    sv.set(f"Setup error: {exc}")
-                    result["error"] = str(exc)
+                if driver is None:
+                    result["error"] = (
+                        f"Playwright driver not found inside app bundle.\n\n"
+                        f"Diagnostic info:\n{diag}"
+                    )
+                    sv.set("Driver not found — see error details")
                     return
+
+                sv.set(f"Found installer — starting download…")
+                cmd = [str(driver), "install", "chromium"]
+
             else:
                 cmd = [sys.executable, "-m", "playwright", "install", "chromium"]
 
-            sv.set("Starting download…")
             proc = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
@@ -324,7 +364,7 @@ def install_browser_dialog(parent) -> bool:
 
             if proc.returncode != 0:
                 sv.set(f"Download failed (exit code {proc.returncode})")
-                result["error"] = f"Exit code {proc.returncode}"
+                result["error"] = f"Installer exited with code {proc.returncode}"
                 return
 
             if _browser_installed():
@@ -332,7 +372,7 @@ def install_browser_dialog(parent) -> bool:
                 sv.set("Browser ready! ✓")
             else:
                 sv.set("Download finished but browser not found — please retry.")
-                result["error"] = "Browser not found after download"
+                result["error"] = "Browser not found after download completed"
 
         except Exception as exc:
             sv.set(f"Error: {exc}")
@@ -347,9 +387,10 @@ def install_browser_dialog(parent) -> bool:
     if not result["ok"] and result["error"]:
         messagebox.showerror(
             "Setup failed",
-            f"Could not download the browser.\n\nError: {result['error']}\n\n"
-            "Please try restarting the app.\n"
-            "If this keeps happening, contact Jordan at jlbampersand@gmail.com",
+            f"Could not download the browser.\n\n"
+            f"Error details:\n{result['error']}\n\n"
+            f"Please screenshot this message and send it to:\n"
+            f"jlbampersand@gmail.com",
             parent=parent,
         )
     return result["ok"]
@@ -447,7 +488,6 @@ class CanvasArchiveApp:
     # ── Build UI ──────────────────────────────────────────────────────────────
 
     def _build_ui(self):
-        # ── Purple header ──────────────────────────────────────────────────────
         header = tk.Frame(self.root, bg=PURPLE, height=58)
         header.pack(fill="x", side="top")
         header.pack_propagate(False)
@@ -462,7 +502,6 @@ class CanvasArchiveApp:
             fg="#c4a8ff", bg=PURPLE,
         ).pack(side="right", padx=24, pady=20)
 
-        # ── Fixed bottom bar ───────────────────────────────────────────────────
         bot = tk.Frame(self.root, bg=CREAM, pady=14, padx=24)
         bot.pack(fill="x", side="bottom")
 
@@ -500,7 +539,6 @@ class CanvasArchiveApp:
         )
         self.status_lbl.pack(pady=(8, 0))
 
-        # ── Scrollable middle ──────────────────────────────────────────────────
         sc = tk.Frame(self.root, bg=CREAM)
         sc.pack(fill="both", expand=True)
 
@@ -527,8 +565,6 @@ class CanvasArchiveApp:
         self._build_settings()
         self._build_options()
         self._build_log()
-
-    # ── Canvas / scroll callbacks ─────────────────────────────────────────────
 
     def _on_bg_resize(self, e):
         self._bg.itemconfig(self._cw, width=e.width)
@@ -562,8 +598,6 @@ class CanvasArchiveApp:
                                   fill=LINE_CLR, width=1, tags="nblines")
         self._bg.tag_lower("nblines")
 
-    # ── Card helper ───────────────────────────────────────────────────────────
-
     def _card(self, title: str | None = None) -> tk.Frame:
         outer = tk.Frame(self.main, bg=NAVY, padx=2, pady=2)
         outer.pack(fill="x", pady=(0, 16))
@@ -576,8 +610,6 @@ class CanvasArchiveApp:
                 fg=PURPLE, bg=WHITE,
             ).pack(anchor="w", pady=(0, 12))
         return inner
-
-    # ── Pill toggles ──────────────────────────────────────────────────────────
 
     def _build_what(self):
         card = self._card("What would you like to download?")
@@ -654,8 +686,6 @@ class CanvasArchiveApp:
         var.trace_add("write", refresh)
         refresh()
 
-    # ── Settings ──────────────────────────────────────────────────────────────
-
     def _build_settings(self):
         card = self._card("Settings")
 
@@ -714,8 +744,6 @@ class CanvasArchiveApp:
             command=self._browse,
         ).pack(side="left")
 
-    # ── Options ───────────────────────────────────────────────────────────────
-
     def _build_options(self):
         card = self._card()
         for var, text in [
@@ -733,8 +761,6 @@ class CanvasArchiveApp:
                 border_width=2,
                 corner_radius=4,
             ).pack(anchor="w", pady=3)
-
-    # ── Terminal log ──────────────────────────────────────────────────────────
 
     def _build_log(self):
         outer = tk.Frame(self.main, bg=NAVY, padx=2, pady=2)
@@ -774,8 +800,6 @@ class CanvasArchiveApp:
             ("progress", "#74b9ff"),
         ]:
             self.log_text.tag_config(tag, foreground=colour)
-
-    # ── Login popup ───────────────────────────────────────────────────────────
 
     def _show_login_popup(self):
         if self._login_popup is not None:
@@ -850,8 +874,6 @@ class CanvasArchiveApp:
         self._log("  Logged in — continuing…\n\n", "success")
         self._set_status("Continuing download…")
 
-    # ── Status + dots ─────────────────────────────────────────────────────────
-
     def _set_status(self, text: str, fg: str = PURPLE):
         self.status_var.set(text)
         self.status_lbl.configure(fg=fg)
@@ -873,8 +895,6 @@ class CanvasArchiveApp:
             self.root.after_cancel(self._dot_job)
             self._dot_job = None
 
-    # ── Sleep prevention ──────────────────────────────────────────────────────
-
     def _start_caffeinate(self):
         import platform
         if platform.system() == "Darwin":
@@ -893,8 +913,6 @@ class CanvasArchiveApp:
             except Exception: pass
             self._caffeinate_proc = None
 
-    # ── Actions ───────────────────────────────────────────────────────────────
-
     def _browse(self):
         d = filedialog.askdirectory(
             title="Choose where to save your files",
@@ -908,7 +926,6 @@ class CanvasArchiveApp:
             return
 
         # Always clear cookies on start — forces fresh login every time.
-        # Prevents silent 401 failures from stale/expired sessions.
         for cookie_file in [
             DATA_DIR / "canvas_cookies.json",
             DATA_DIR / "panopto_cookies.txt",
@@ -1110,8 +1127,6 @@ class CanvasArchiveApp:
             f"All done!\n\nYour files have been saved to:\n\n{out}",
             parent=self.root,
         )
-
-    # ── Log helpers ───────────────────────────────────────────────────────────
 
     def _clear_log(self):
         self.log_text.configure(state="normal")
