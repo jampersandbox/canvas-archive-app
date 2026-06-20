@@ -20,7 +20,6 @@ datas = [
     ("patch_scripts.py",       "."),
     (ctk_path,                 "customtkinter"),
     (os.path.join(playwright_dir, "driver"), "playwright/driver"),
-    ("playwright_browsers", "playwright_browsers"),
 ]
 
 a = Analysis(

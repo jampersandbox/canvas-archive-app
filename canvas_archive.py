@@ -118,13 +118,19 @@ def _get_data_dir() -> Path:
 def _playwright_browsers_dir() -> Path:
     """
     Return the directory where playwright should look for browsers.
-    In a frozen app, use the pre-bundled browsers shipped with the app.
-    In development, use the user's playwright cache.
+    In a frozen app, browsers are copied directly into the app bundle
+    AFTER PyInstaller builds — this avoids codesigning failures.
     """
     if getattr(sys, "frozen", False):
-        bundled = Path(sys._MEIPASS) / "playwright_browsers"
-        if bundled.exists():
-            return bundled
+        # Browsers are copied alongside the executable by the build process.
+        # sys.executable = Canvas Archive.app/Contents/MacOS/Canvas Archive
+        # so parent = Canvas Archive.app/Contents/MacOS/
+        for candidate in [
+            Path(sys.executable).parent / "playwright_browsers",
+            Path(sys._MEIPASS) / "playwright_browsers",
+        ]:
+            if candidate.exists():
+                return candidate
     if sys.platform == "darwin":
         return Path.home() / "Library" / "Caches" / "ms-playwright"
     elif sys.platform.startswith("win"):
