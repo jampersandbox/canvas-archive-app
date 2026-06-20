@@ -93,6 +93,8 @@ LOG_BG   = "#0d0d1a"
 LOG_FG   = "#4ade80"
 LINE_CLR = "#ddd8ce"
 
+CURRENT_VERSION = "1.0.29"
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 #  Paths
@@ -210,6 +212,43 @@ def write_canvas_config(canvas_url: str, panopto_url: str,
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+#  Update checker
+# ──────────────────────────────────────────────────────────────────────────────
+def _check_for_updates(callback):
+    """
+    Check GitHub releases API for a newer version.
+    Calls callback(latest_version) if an update is available.
+    Runs in a background thread so it never blocks the UI.
+    """
+    def _run():
+        try:
+            import urllib.request, json as _json
+            url = ("https://api.github.com/repos/"
+                   "jampersandbox/canvas-archive-app/releases/latest")
+            req = urllib.request.Request(
+                url, headers={"User-Agent": "CanvasArchive"}
+            )
+            with urllib.request.urlopen(req, timeout=5) as r:
+                data = _json.loads(r.read().decode())
+            latest = data.get("tag_name", "").lstrip("v")
+            if not latest:
+                return
+
+            def _parse(v):
+                try:
+                    return tuple(int(x) for x in v.split("."))
+                except Exception:
+                    return (0,)
+
+            if _parse(latest) > _parse(CURRENT_VERSION):
+                callback(latest)
+        except Exception:
+            pass   # Silently ignore — no internet, rate limit, etc.
+
+    threading.Thread(target=_run, daemon=True).start()
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 #  Browser helpers
 # ──────────────────────────────────────────────────────────────────────────────
 def _chromium_exe() -> Path | None:
@@ -237,23 +276,18 @@ def _find_playwright_driver() -> tuple[Path | None, str]:
     """
     Search for the playwright driver binary inside the frozen bundle.
     Returns (driver_path, diagnostic_message).
-    driver_path is None if not found.
     """
     import stat as _stat
-
     try:
         import playwright
-        pw_file  = Path(playwright.__file__)
-        pw_dir   = pw_file.parent
-        meipass  = Path(sys._MEIPASS)
+        pw_dir  = Path(playwright.__file__).parent
+        meipass = Path(sys._MEIPASS)
 
-        # Binary names to look for, in order of preference
         if sys.platform == "darwin" or sys.platform.startswith("linux"):
             names = ["playwright", "node"]
         else:
             names = ["playwright.cmd", "playwright.ps1", "playwright.exe"]
 
-        # Directories to search, in order of preference
         search_dirs = [
             pw_dir / "driver",
             meipass / "playwright" / "driver",
@@ -265,7 +299,6 @@ def _find_playwright_driver() -> tuple[Path | None, str]:
             for name in names:
                 candidate = d / name
                 if candidate.exists():
-                    # Make executable
                     if sys.platform != "win32":
                         candidate.chmod(
                             candidate.stat().st_mode
@@ -273,7 +306,6 @@ def _find_playwright_driver() -> tuple[Path | None, str]:
                         )
                     return candidate, f"Found at {candidate}"
 
-        # Not found — build diagnostic
         diag_lines = [f"playwright dir: {pw_dir}"]
         for d in search_dirs:
             if d.exists():
@@ -343,7 +375,7 @@ def install_browser_dialog(parent) -> bool:
                     sv.set("Driver not found — see error details")
                     return
 
-                sv.set(f"Found installer — starting download…")
+                sv.set("Found installer — starting download…")
                 cmd = [str(driver), "install", "chromium"]
 
             else:
@@ -464,6 +496,7 @@ class CanvasArchiveApp:
         self._last_was_progress = False
         self._caffeinate_proc   = None
         self._url_combo         = None
+        self._update_banner     = None
 
         if SENTINEL_FILE.exists():
             try: SENTINEL_FILE.unlink()
@@ -472,6 +505,9 @@ class CanvasArchiveApp:
         self._build_ui()
         self._poll_log()
         self.root.after(800, self._check_browser)
+        _check_for_updates(
+            lambda v: self.root.after(0, lambda: self._show_update_banner(v))
+        )
 
     # ── Browser check ─────────────────────────────────────────────────────────
 
@@ -484,6 +520,52 @@ class CanvasArchiveApp:
                     "Canvas Archive needs a browser to log in to Canvas.\n"
                     "Please restart the app to try again.",
                 )
+
+    # ── Update banner ─────────────────────────────────────────────────────────
+
+    def _show_update_banner(self, latest_version: str):
+        """Show a gentle update notification banner below the header."""
+        if self._update_banner is not None:
+            return
+
+        banner = tk.Frame(self.root, bg="#fff3cd", pady=6)
+        banner.pack(fill="x", side="top")
+
+        tk.Label(
+            banner,
+            text=f"✨  Version {latest_version} is available!",
+            font=("Helvetica", 10, "bold"),
+            bg="#fff3cd", fg="#856404",
+        ).pack(side="left", padx=(16, 8))
+
+        tk.Button(
+            banner,
+            text="Download update →",
+            font=("Helvetica", 10),
+            bg="#ffc107", fg="#333333",
+            relief="flat", bd=0,
+            padx=10, pady=2,
+            cursor="hand2",
+            command=lambda: __import__("webbrowser").open(
+                "https://archive-your-canvas.lovable.app"
+            ),
+        ).pack(side="left")
+
+        tk.Button(
+            banner,
+            text="✕",
+            font=("Helvetica", 10),
+            bg="#fff3cd", fg="#856404",
+            relief="flat", bd=0,
+            padx=8,
+            cursor="hand2",
+            command=lambda: (
+                banner.destroy(),
+                setattr(self, "_update_banner", None),
+            ),
+        ).pack(side="right", padx=8)
+
+        self._update_banner = banner
 
     # ── Build UI ──────────────────────────────────────────────────────────────
 
@@ -566,6 +648,8 @@ class CanvasArchiveApp:
         self._build_options()
         self._build_log()
 
+    # ── Canvas / scroll callbacks ─────────────────────────────────────────────
+
     def _on_bg_resize(self, e):
         self._bg.itemconfig(self._cw, width=e.width)
         self._redraw_lines()
@@ -598,6 +682,8 @@ class CanvasArchiveApp:
                                   fill=LINE_CLR, width=1, tags="nblines")
         self._bg.tag_lower("nblines")
 
+    # ── Card helper ───────────────────────────────────────────────────────────
+
     def _card(self, title: str | None = None) -> tk.Frame:
         outer = tk.Frame(self.main, bg=NAVY, padx=2, pady=2)
         outer.pack(fill="x", pady=(0, 16))
@@ -610,6 +696,8 @@ class CanvasArchiveApp:
                 fg=PURPLE, bg=WHITE,
             ).pack(anchor="w", pady=(0, 12))
         return inner
+
+    # ── Pill toggles ──────────────────────────────────────────────────────────
 
     def _build_what(self):
         card = self._card("What would you like to download?")
@@ -686,6 +774,8 @@ class CanvasArchiveApp:
         var.trace_add("write", refresh)
         refresh()
 
+    # ── Settings ──────────────────────────────────────────────────────────────
+
     def _build_settings(self):
         card = self._card("Settings")
 
@@ -744,6 +834,8 @@ class CanvasArchiveApp:
             command=self._browse,
         ).pack(side="left")
 
+    # ── Options ───────────────────────────────────────────────────────────────
+
     def _build_options(self):
         card = self._card()
         for var, text in [
@@ -761,6 +853,8 @@ class CanvasArchiveApp:
                 border_width=2,
                 corner_radius=4,
             ).pack(anchor="w", pady=3)
+
+    # ── Terminal log ──────────────────────────────────────────────────────────
 
     def _build_log(self):
         outer = tk.Frame(self.main, bg=NAVY, padx=2, pady=2)
@@ -800,6 +894,8 @@ class CanvasArchiveApp:
             ("progress", "#74b9ff"),
         ]:
             self.log_text.tag_config(tag, foreground=colour)
+
+    # ── Login popup ───────────────────────────────────────────────────────────
 
     def _show_login_popup(self):
         if self._login_popup is not None:
@@ -874,6 +970,8 @@ class CanvasArchiveApp:
         self._log("  Logged in — continuing…\n\n", "success")
         self._set_status("Continuing download…")
 
+    # ── Status + dots ─────────────────────────────────────────────────────────
+
     def _set_status(self, text: str, fg: str = PURPLE):
         self.status_var.set(text)
         self.status_lbl.configure(fg=fg)
@@ -895,6 +993,8 @@ class CanvasArchiveApp:
             self.root.after_cancel(self._dot_job)
             self._dot_job = None
 
+    # ── Sleep prevention ──────────────────────────────────────────────────────
+
     def _start_caffeinate(self):
         import platform
         if platform.system() == "Darwin":
@@ -912,6 +1012,8 @@ class CanvasArchiveApp:
             try: self._caffeinate_proc.terminate()
             except Exception: pass
             self._caffeinate_proc = None
+
+    # ── Actions ───────────────────────────────────────────────────────────────
 
     def _browse(self):
         d = filedialog.askdirectory(
@@ -1127,6 +1229,8 @@ class CanvasArchiveApp:
             f"All done!\n\nYour files have been saved to:\n\n{out}",
             parent=self.root,
         )
+
+    # ── Log helpers ───────────────────────────────────────────────────────────
 
     def _clear_log(self):
         self.log_text.configure(state="normal")
